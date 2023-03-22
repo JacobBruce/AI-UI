@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AI UI</title>
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';" />
+	<link rel="stylesheet" href="styles.css">
+	<script>window.$ = window.jQuery = require('jquery');</script>
+	<script>
+	const { ipcRenderer } = require('electron');
+	
+	const pedit_img_html = '<img id="prompt_edit" class="edit_btn" src="./img/edit_w.png" width="15" onclick="ToggleEditPrompt()" />';
+	
+	var avatar_vid = null;
+	var loop_timer = null;
+	var dot_count = 0;
+	var thinking = false;
+	var generating = false;
+	var chat_exp = false;
+	var gen_exp = false;
+	var adv_show = false;
+	var voice_arr = [];
+	var prompt = '';
+
+	var human_name = 'Human';
+	var bot_name = 'Bot';
+	var bot_voice = 0;
+	var speech_vol = 1.0;
+	var speech_rate = 200;
+	var pitch_shift = 0;
+
+	var max_mm = 5;
+	var max_rl = 50;
+	var min_rl = 1;;
+	var b_temp = 0.8;
+	var prompt_p = 0;
+	
+	var model_type = 0;
+	var comp_dev = 0;
+	var script_dir = '';
+	var model_dir = '';
+	var python_bin = '';
+	var avatar_mp4 = '';
+	var avatar_img = '';
+	
+	function playVideo() {
+		let rnd = Math.floor(Math.random() * 999999);
+		$('#avatar_source').prop('src', avatar_mp4+'?rnd='+rnd);
+		avatar_vid.load();
+		avatar_vid.play(); 
+	}
+
+	/*function pauseVideo() { 
+		if (!avatar_vid.paused) {
+			avatar_vid.pause(); 
+		}
+	}*/
+	
+	function EncodeHTML(txt) {
+		return txt.replaceAll('&', '&amp;').
+			replaceAll('<', '&lt;').
+			replaceAll('>', '&gt;').
+			replaceAll('"', '&quot;').
+			replaceAll('\'', '&apos;').
+			replaceAll('/', '&#47;').
+			replaceAll('\\', '&#92;').
+			replaceAll('\t', '&nbsp;&nbsp;');
+	}
+	
+	function TrimLast(str, chr) {
+		if (str.endsWith(chr)) {
+			return str.slice(0, -1);
+		} else {
+			return str;
+		}
+	}
+
+	// ---- PAGES ----
+	
+	function HidePages() {
+		$('#chat_app').hide();
+		$('#txtgen_app').hide();
+		$('#console_tab').hide();
+		$('#config_tab').hide();
+		$('#about_tab').hide();
+	}
+	
+	function SelectPage(btn) {
+		$('.menu_btn').removeClass('menu_sel');
+		btn.classList.add('menu_sel');
+		HidePages();
+	}
+	
+	function ChatPage(btn) {
+		SelectPage(btn);
+		$('#chat_app').show();
+	}
+	
+	function TextPage(btn) {
+		SelectPage(btn);
+		$('#txtgen_app').show();
+	}
+	
+	function ConfigPage(btn) {
+		SelectPage(btn);
+		$('#config_tab').show();
+	}
+	
+	function ConsolePage(btn) {
+		SelectPage(btn);
+		$('#console_tab').show();
+	}
+
+	function AboutPage(btn) {
+		SelectPage(btn);
+		$('#about_tab').show();
+	}
+	
+	// ---- CHAT ----
+	
+	function ThinkAnim() {
+		let targ = (thinking) ? '#thinking' : '#generating';
+		switch (dot_count) {
+		case 0: 
+			$(targ).html('');
+			dot_count++;
+			break;
+		case 1:
+			$(targ).html('.');
+			dot_count++;
+			break;
+		case 2:
+			$(targ).html('..');
+			dot_count++;
+			break;
+		case 3:
+			$(targ).html('...');
+			dot_count++;
+			break;
+		case 4:
+			$(targ).html('..');
+			dot_count++;
+			break;
+		case 5:
+			$(targ).html('.');
+			dot_count = 0;
+			break;
+		}
+	}
+	
+	function StartThinking() {
+		thinking = true;
+		var scroll_box = $('#chat_log');
+		scroll_box.animate({scrollTop: scroll_box.prop("scrollHeight")}, 300, 'linear', function() {
+			$('#thinking').html('');
+			$('#thinking').show();
+			dot_count = 1;
+			loop_timer = setInterval(ThinkAnim, 1000);
+		});
+	}
+	
+	function StopThinking() {
+		thinking = false;
+		var scroll_box = $('#chat_log');
+		scroll_box.animate({scrollTop: scroll_box.prop("scrollHeight")});
+		$('#thinking').hide();
+		clearInterval(loop_timer);
+	}
+	
+	ipcRenderer.on('bot-msg', (event, payload) => {
+		const bot_msg = EncodeHTML(payload.msg.trim()).replaceAll("[AI_UI_BR]", "<br>");
+		const msg_html = '<div class="bmsg_box"><p class="bot_msg">'+bot_msg+'</p></div>';
+		$('#chat_log').append(msg_html);
+		$('#redo_btn').prop('disabled', false);
+		$('#cont_btn').prop('disabled', false);
+		$('#clear_btn').prop('disabled', false);
+		$('#apply_btn').prop('disabled', false);
+		$('#avatar_img').hide();
+		$('#avatar_vid').show();
+		StopThinking();
+		playVideo();
+	});
+	
+	function SendMsg() {
+		if (thinking || generating) return;//TODO: remove this for multi msg from user
+		if ($('#send_btn').prop('disabled')) return;
+		let message = '';
+		let html_msg = '';
+		if (chat_exp) {
+			message = $('#area_inp').val().trim();
+			html_msg = EncodeHTML(message).replaceAll("\n", "<br>");
+			message = message.replaceAll("\n", "[AI_UI_BR]");
+			$('#area_inp').val('');
+		} else {
+			message = $('#text_inp').val().trim();
+			html_msg = EncodeHTML(message);
+			$('#text_inp').val('');
+		}
+		if (message == '') return;
+		html_msg = '<div class="umsg_box"><p class="chat_msg">'+html_msg+'</p></div>';
+		$('#chat_log').append(html_msg);
+		$('#redo_btn').prop('disabled', true);
+		$('#cont_btn').prop('disabled', true);
+		$('#clear_btn').prop('disabled', true);
+		$('#apply_btn').prop('disabled', true);
+		ipcRenderer.send('send-msg', { msg: message });
+		StartThinking();
+	}
+	
+	function RedoLast() {
+		$('.bmsg_box').last().remove();
+		$('#redo_btn').prop('disabled', true);
+		$('#cont_btn').prop('disabled', true);
+		$('#clear_btn').prop('disabled', true);
+		$('#apply_btn').prop('disabled', true);
+		ipcRenderer.send('send-msg', { msg: 'redo_last' });
+		StartThinking();
+	}
+	
+	function ContChat() {
+		$('#redo_btn').prop('disabled', true);
+		$('#cont_btn').prop('disabled', true);
+		$('#clear_btn').prop('disabled', true);
+		$('#apply_btn').prop('disabled', true);
+		ipcRenderer.send('send-msg', { msg: 'cont_chat' });
+		StartThinking();
+	}
+	
+	function ClearChat() {
+		$('#chat_log').html('');
+		ipcRenderer.send('send-msg', { msg: 'clear_chat' });
+	}
+	
+	function ToggleMsgBox() {
+		if (chat_exp) {
+			$('#area_inp').hide();
+			$('#text_inp').prop('disabled', false);
+			$('#text_inp').focus();
+		} else {
+			$('#area_inp').show();
+			$('#text_inp').prop('disabled', true);
+			$('#area_inp').focus();
+		}
+		chat_exp = !chat_exp;
+	}
+	
+	// ---- TEXT GEN ----
+
+	function StartGenerating() {
+		generating = true;
+		$('#generating').html('');
+		$('#generating').show();
+		dot_count = 1;
+		loop_timer = setInterval(ThinkAnim, 1000);
+	}
+	
+	function StopGenerating() {
+		generating = false;
+		$('#generating').hide();
+		clearInterval(loop_timer);
+	}
+	
+	function ToggleGenBox() {
+		if (gen_exp) {
+			$('#gen_area_inp').hide();
+			$('#gen_text_inp').prop('disabled', false);
+			$('#gen_text_inp').focus();
+		} else {
+			$('#gen_area_inp').show();
+			$('#gen_text_inp').prop('disabled', true);
+			$('#gen_area_inp').focus();
+		}
+		gen_exp = !gen_exp;
+	}
+	
+	function CopyGenTxt() {
+		const gen_txt = $('#gen_result').html().replaceAll("<br>", "\n");
+		ipcRenderer.send('copy-text', { txt: gen_txt })
+	}
+	
+	function GenText() {
+		if (thinking || generating) return;
+		if ($('#gen_btn').prop('disabled')) return;
+		let start_txt = '';
+		if (gen_exp) {
+			start_txt = $('#gen_area_inp').val().replaceAll("\n", "[AI_UI_BR]");
+		} else {
+			start_txt = $('#gen_text_inp').val();
+		}
+		if (start_txt == '') return;
+		$('#gen_btn').prop('disabled', true);
+		$('#gen_result').html('Generating text ...');
+		const gen_temp = $('#gen_temp').val();
+		const max_genl = $('#max_gen_len').val();
+		const min_genl = $('#min_gen_len').val();
+		ipcRenderer.send('gen-text', { txt: start_txt, max: max_genl, min: min_genl, temp: gen_temp });
+		StartGenerating();
+	}
+	
+	ipcRenderer.on('gen-result', (event, payload) => {
+		const txt_html = EncodeHTML(payload.txt).replaceAll("[AI_UI_BR]", "<br>");
+		$('#gen_btn').prop('disabled', false);
+		$('#gen_result').html(txt_html);
+		StopGenerating();
+	});
+
+	// ---- APP ----
+
+	ipcRenderer.on('init-ui', (event, payload) => {
+		if (payload.state === true) {
+			const d = new Date();
+			const curr_date = (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
+			prompt = 'Chat log between '+human_name+' and '+bot_name+' on '+curr_date;
+			$('#prompt_txta').val(prompt);
+			$('#chat_log').html('<div class="prompt"><p id="init_prompt" class="prompt_txt">'+
+				EncodeHTML(prompt)+' '+pedit_img_html+'</p></div>');
+			$('#gen_result').html('');
+		} else {
+			$('#send_btn').prop('disabled', true);
+			$('#redo_btn').prop('disabled', true);
+			$('#cont_btn').prop('disabled', true);
+			$('#clear_btn').prop('disabled', true);
+			$('#apply_btn').prop('disabled', true);
+			$('#gen_btn').prop('disabled', true);
+			StopThinking();
+			StopGenerating();
+		}
+	});
+	
+	ipcRenderer.on('ai-ready', (event, payload) => {
+		$('#apply_btn').prop('disabled', false);
+		$('#send_btn').prop('disabled', false);
+		$('#gen_btn').prop('disabled', false);
+		StopThinking();
+		StopGenerating();
+	});
+	
+	ipcRenderer.on('add-voice', (event, payload) => {
+		let prop_str = voice_arr.length+'"';
+		if (voice_arr.length == bot_voice) {
+			prop_str = voice_arr.length+'" selected';
+		}
+		$('#voices').append('<option value="'+prop_str+'>'+payload.name+'</option>');
+		voice_arr.push(payload);
+	});
+	
+	ipcRenderer.on('prompt-msg', (event, payload) => {
+		$('#init_prompt').html(payload.msg);
+		$('#gen_result').html(payload.msg);
+	});
+	
+	ipcRenderer.on('load-config', (event, payload) => {
+		const chat_config = payload.configs.chat;
+		const app_config = payload.configs.app;
+		const ai_config = payload.configs.ai;
+		
+		human_name = chat_config.human_name;
+		bot_name = chat_config.bot_name;
+		bot_voice = chat_config.bot_voice;
+		speech_vol = chat_config.speech_vol;
+		speech_rate = chat_config.speech_rate;
+		pitch_shift = chat_config.pitch_shift;
+
+		avatar_img = app_config.avatar_img;
+		script_dir = app_config.script_dir;
+		python_bin = app_config.python_bin;
+		model_dir = app_config.model_dir;
+		model_type = app_config.model_type;
+		comp_dev = app_config.comp_dev;
+
+		max_mm = ai_config.msg_mem;
+		max_rl = ai_config.max_res;
+		min_rl = ai_config.min_res;
+		b_temp = ai_config.base_temp;
+		prompt_p = ai_config.prompt_p;
+
+		if (payload.skip_inputs) return;
+
+		$('#user_name').val(human_name);
+		$('#bot_name').val(bot_name);
+		$('#voices').val(bot_voice);
+		$('#speech_vol').val(speech_vol);
+		$('#speech_rate').val(speech_rate);
+		$('#speech_pitch').val(pitch_shift);
+
+		$('#avatar_img').prop('src', 'file://'+avatar_img);
+		$('#script_dir').val(script_dir);
+		$('#python_bin').val(python_bin);
+		$('#model_dir').val(model_dir);
+		$('#mtype_select').val(model_type);
+		$('#device_select').val(comp_dev);
+
+		$('#max_msg_mem').val(max_mm);
+		$('#max_res_len').val(max_rl);
+		$('#min_res_len').val(min_rl);
+		$('#base_temp').val(b_temp);
+		$('#pp_select').val(prompt_p);
+
+		avatar_mp4 = 'file://'+script_dir+'/MakeItTalk/examples/face_pred_fls_speech_audio_embed.mp4';
+		$('#avatar_source').prop('src', avatar_mp4);
+	});
+	
+	function ApplySettings() {
+		let sdir = TrimLast($('#script_dir').val().replaceAll('\\', '/'), '/');
+		let mdir = TrimLast($('#model_dir').val().replaceAll('\\', '/'), '/');
+		let pbin = $('#python_bin').val().replaceAll('\\', '/');
+		let mtype = $('#mtype_select').val();
+		let cdev = $('#device_select').val();
+		if (script_dir != sdir || python_bin != pbin || model_dir != mdir || model_type != mtype || comp_dev != cdev) {
+			ipcRenderer.send('config-app', { script_dir: sdir, python_bin: pbin, model_dir: mdir, model_type: mtype, comp_dev: cdev });
+		}
+	}
+	
+	function ApplyConfig() {
+		if (adv_show) {
+			const maxmm = $('#max_msg_mem').val();
+			const maxrl = $('#max_res_len').val();
+			const minrl = $('#min_res_len').val();
+			const btemp = $('#base_temp').val();
+			const promptp = $('#pp_select').find(':selected').val();
+			if (max_mm != maxmm || max_rl != maxrl || min_rl != minrl || b_temp != btemp || prompt_p != promptp) {
+				ipcRenderer.send('config-ai', { max_mmem: maxmm, max_rlen: maxrl, min_rlen: minrl, temp: btemp, pp: promptp });
+				ipcRenderer.send('show-alert', { msg: 'New settings applied.' });
+			}
+		} else {
+			const hname = $('#user_name').val();
+			const bname = $('#bot_name').val();
+			const spvol = $('#speech_vol').val();
+			const srate = $('#speech_rate').val();
+			const spitch = $('#speech_pitch').val();
+			const newvc = $('#voices').find(':selected').val();
+			let alert_msg = true;
+
+			if (human_name != hname || bot_name != bname) {
+				ipcRenderer.send('update-users', { human: hname, bot: bname });
+				alert_msg = false;
+			}
+			
+			if (bot_voice != newvc || speech_vol != spvol || speech_rate != srate || pitch_shift != spitch) {
+				ipcRenderer.send('config-voice', { voice:newvc, vol:spvol, rate:srate, pitch:spitch });
+				if (alert_msg) ipcRenderer.send('show-alert', { msg: 'New settings applied.' });
+			}
+		}
+	}
+	
+	function ToggleConfig() {
+		if (adv_show) {
+			$('#adv_btn').html('AI SETTINGS');
+			$('#adv_config').hide();
+			$('#basic_config').show();
+		} else {
+			$('#adv_btn').html('MAIN SETTINGS');
+			$('#basic_config').hide();
+			$('#adv_config').show();
+		}
+		adv_show = !adv_show;
+	}
+	
+	function ToggleEditPrompt() {
+		if ($('#edit_dialog').is(":hidden")) {
+			$('#edit_dialog').show();
+			$('#prompt_txta').focus();
+		} else {
+			$('#edit_dialog').hide();
+		}
+	}
+	
+	function ApplyNewPrompt() {
+		prompt = $('#prompt_txta').val();
+		p_html = EncodeHTML(prompt).replaceAll("\n", "<br>");
+		ipcRenderer.send('update-prompt', prompt.replaceAll("\n", "[AI_UI_BR]"));
+		$('#init_prompt').html(p_html+' '+pedit_img_html);
+		ToggleEditPrompt();
+	}
+	
+	function ChangeAvatar() {
+		window.aiuiAPI.openAvatar().then(result => {
+			if (result === false) return;
+			avatar_img = result.replaceAll('\\', '/');
+			ipcRenderer.send('update-avatar', avatar_img);
+			$('#avatar_img').prop('src', 'file://'+avatar_img);
+			$('#avatar_vid').hide();
+			$('#avatar_img').show();
+		});
+	}
+	
+	function OpenFolder(elem) {
+		window.aiuiAPI.openFolder().then(result => {
+			if (result === false) return;
+			$('#'+elem).val(result.replaceAll('\\', '/'));
+		});
+	}
+	
+	function OpenFile(elem) {
+		window.aiuiAPI.openFile().then(result => {
+			if (result === false) return;
+			$('#'+elem).val(result.replaceAll('\\', '/'));
+		});
+	}
+	
+	function SetAppVersion() {
+		window.aiuiAPI.getAppVersion().then(result => {
+			$('#app-version').html(result);
+			$('#aiui-version').html(result);
+		});
+	}
+	
+	function RestartScript() {
+		ipcRenderer.invoke('restart-script');
+	}
+	
+	function StartScript() {
+		ipcRenderer.invoke('start-script');
+	}
+	
+	function QuitApp() {
+		ipcRenderer.invoke('close-app');
+	}
+	
+	$(document).ready(function() {
+		SetAppVersion();
+		StartScript();
+
+		avatar_vid = document.getElementById('avatar_vid');
+
+		$("#text_inp").on('keyup', function (e) {
+			if (e.key === 'Enter' || e.keyCode === 13) {
+				SendMsg();
+			}
+		});
+		
+		$("#gen_text_inp").on('keyup', function (e) {
+			if (e.key === 'Enter' || e.keyCode === 13) {
+				GenText();
+			}
+		});
+
+		$('#area_inp').on('keydown', function(e) {
+			if (e.key === 'Tab' || e.keyCode == 9) {
+				e.preventDefault();
+				var s = this.selectionStart;
+				$(this).val(function(i, v) {
+					return v.substring(0, s) + "\t" + v.substring(this.selectionEnd)
+				});
+				this.selectionEnd = s + 1;
+			}
+		});
+	});
+	</script>
+</head>
+<body>
+	<div id="container">
+
+		<div id="main_menu">
+			<button class="menu_btn menu_sel" onclick="ChatPage(this)">CHAT BOT</button><button class="menu_btn" onclick="TextPage(this)">TEXT GEN</button><!--<button class="menu_btn" onclick="ConsolePage(this)">CONSOLE</button>--><button class="menu_btn" onclick="ConfigPage(this)">SETTINGS</button><button class="menu_btn" onclick="AboutPage(this)">ABOUT</button>
+			<span id="menu_txt">AI UI v<span id="app-version"></span></b>
+		</div>
+		
+		<div id="content">
+
+			<div id="chat_app">		
+				<div id="chat_box">
+					<div id="chat_log">
+						<div class="prompt"><p id="init_prompt" class="prompt_txt">Initializing AI Engine... please wait.</p></div>
+					</div>
+					<div id="thinking"></div>
+					<div id="exp_box"><textarea id="area_inp" class="txt_area hidden" name="msg_txta"></textarea></div>
+					<div id="send_box">
+						<div id="text_box">
+							<input type="text" id="text_inp" name="msg_txt" placeholder="Type your message" autofocus>
+						</div>
+						<button id="exp_btn" onclick="ToggleMsgBox()"><img src="./img/expand.png" width="20" /></button>
+						<div id="butt_box">
+							<button id="send_btn" class="btn chat_btn" onclick="SendMsg()" disabled>SEND</button><button id="redo_btn" class="btn chat_btn" onclick="RedoLast()" disabled>REDO</button><button id="cont_btn" class="btn chat_btn" onclick="ContChat()" disabled>CONT</button><button id="clear_btn" class="btn chat_btn" onclick="ClearChat()" disabled>CLEAR</button>
+						</div>
+					</div>
+					<div id="edit_dialog" class="text_dialog hidden">
+						<div class="dialog_head">EDIT INITIAL PROMPT</div>
+						<div class="dialog_body">
+							<textarea id="prompt_txta" class="txt_area"></textarea>
+						</div>
+						<div class="dialog_foot">
+							<button class="btn dialog_btn" onclick="ApplyNewPrompt()">APPLY</button>
+							<button class="btn dialog_btn" onclick="ToggleEditPrompt()">CANCEL</button>
+						</div>
+					</div>
+				</div>
+				
+				<div id="chat_side">
+					<div id="avatar_box">
+						<img id="avatar_img" width="256" height="256" src="" />
+						<video id="avatar_vid" class="hidden" width="256" height="256">
+							<source id="avatar_source" src="" type="video/mp4">
+						</video>
+						<img id="avatar_btn" width="42" height="42" src="./img/folder_b.png" onclick="ChangeAvatar()" />
+					</div>
+					<center id="config_box">
+						<div id="basic_config">
+							<span class="cfg_lbl">User Names</span>
+							<input type="text" id="user_name" class="cfg_usr" placeholder="Human Name">
+							<input type="text" id="bot_name" class="cfg_usr" placeholder="Bot Name">
+							<span class="cfg_lbl">Bot Voice</span>
+							<select id="voices" class="cfg_drp"></select>
+							<span class="cfg_lbl">Speech Volume</span>
+							<input type="range" id="speech_vol" class="cfg_sld" min="0.05" max="1.0" step="0.05" value="1.0">
+							<span class="cfg_lbl">Speech Rate</span>
+							<input type="range" id="speech_rate" class="cfg_sld" min="1" max="400" value="200">
+							<span class="cfg_lbl">Speech Pitch</span>
+							<input type="range" id="speech_pitch" class="cfg_sld" min="-11" max="10" value="0">
+						</div>
+						<div id="adv_config">
+							<span class="cfg_lbl">Max Message Memory <img class="help_icon" width="16" height="16" title="The number of messages the AI will remember. Higher values allow the AI to have a longer memory but will also increase the response time." /></span>
+							<input type="number" id="max_msg_mem" class="cfg_num" min="2" max="100" value="5">
+							<span class="cfg_lbl">Max Response Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate in each response. A token is like a word but spaces and other symbols may be considered a token." /></span>
+							<input type="number" id="max_res_len" class="cfg_num" min="1" max="1000" value="50">
+							<span class="cfg_lbl">Min Response Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate in each response. A token is like a word but spaces and other symbols may be considered a token." /></span>
+							<input type="number" id="min_res_len" class="cfg_num" min="1" max="999" value="1">
+							<span class="cfg_lbl">Base Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable. The engine may briefly increase this value if the AI produces poor responses." /></span>
+							<input type="number" id="base_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
+							<span class="cfg_lbl">Prompt Persistence <img class="help_icon" width="16" height="16" title="Controls whether the initial prompt will be limited to the message memory or permanently included at the start of the actual prompt which is fed to the AI." /></span>
+							<select id="pp_select" class="cfg_drp">
+								<option value="0" selected>Memory Limited</option>
+								<option value="1">Permanent</option>
+								<option value="2">No Prompt</option>
+							</select>
+						</div>
+						<button id="apply_btn" class="btn cfg_btn" onclick="ApplyConfig()" disabled>APPLY</button>
+						<button id="adv_btn" class="btn cfg_btn" onclick="ToggleConfig()">AI SETTINGS</button>
+					</center>
+				</div>
+			</div>
+
+			<div id="txtgen_app" class="hidden">
+				<div id="txtgen_box">
+					<div id="gen_result"></div>
+					<div id="generating"></div>
+					<div id="gen_exp_box"><textarea id="gen_area_inp" class="txt_area hidden" name="msg_txta"></textarea></div>
+					<div id="gen_box">
+						<div id="gen_text_box">
+							<input type="text" id="gen_text_inp" name="msg_txt" placeholder="Opening text">
+						</div>
+						<button id="gen_exp_btn" onclick="ToggleGenBox()"><img src="./img/expand.png" width="20" /></button>
+						<div id="gen_butt_box">
+							<button id="gen_btn" class="btn" onclick="GenText()" disabled>GENERATE</button>
+						</div>
+					</div>
+				</div>
+				
+				<div id="gen_side">
+					<center>
+						<span class="cfg_lbl">Max Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
+						<input type="number" id="max_gen_len" class="cfg_num" min="1" max="10000" value="50">
+						<span class="cfg_lbl">Min Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
+						<input type="number" id="min_gen_len" class="cfg_num" min="1" max="999" value="1">
+						<span class="cfg_lbl">Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable." /></span>
+						<input type="number" id="gen_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
+						<button id="copy_btn" class="btn cfg_btn" onclick="CopyGenTxt()">COPY GENERATED TEXT</button>
+					</center>
+				</div>
+			</div>
+
+			<div id="console_tab" class="hidden"></div>
+
+			<div id="config_tab" class="hidden">
+				<center id="settings">
+					<h2>App Settings</h2><hr>
+					<span class="cfg_lbl">Script Folder <img class="help_icon" width="16" height="16" title="The directory containing the python scripts for the AI engine. Should contain a folder called MakeItTalk." /></span>
+					<div class="browse_btn"></div> <input type="text" id="script_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('script_dir')">BROWSE</button>
+					<span class="cfg_lbl">Python Binary <img class="help_icon" width="16" height="16" title="The location of your python binary (on Windows it's a file called python.exe)" /></span>
+					<div class="browse_btn"></div> <input type="text" id="python_bin" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFile('python_bin')">BROWSE</button>
+					<span class="cfg_lbl">Model Folder <img class="help_icon" width="16" height="16" title="The directory containing the AI model (usually has a pytorch_model.bin file in it)" /></span>
+					<div class="browse_btn"></div> <input type="text" id="model_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('model_dir')">BROWSE</button>
+					<span class="cfg_lbl">Model Type <img class="help_icon" width="16" height="16" title="The type of AI model in the model folder (should be a text generation model)." /></span>
+					<select id="mtype_select" class="cfg_drp">
+						<option value="0" selected>Auto-detect</option>
+						<option value="1">GPT-Neo</option>
+					</select>
+					<span class="cfg_lbl">Compute Device <img class="help_icon" width="16" height="16" title="If your GPU doesn't support CUDA or you don't have enough VRAM then select the CPU option." /></span>
+					<select id="device_select" class="cfg_drp">
+						<option value="cpu" selected>CPU</option>
+						<option value="cuda">GPU</option>
+					</select>
+					<br><br>
+					<button id="settings_btn" class="btn cfg_btn" onclick="ApplySettings()">APPLY</button>
+					<button id="restart_btn" class="btn cfg_btn" onclick="RestartScript()">RESTART AI ENGINE</button>
+				</center>
+			</div>
+
+			<div id="about_tab" class="hidden">
+				<center id="about_box">
+					<h2>About AI UI</h2><hr>
+					<p>AI UI is a user-friendly interface for interacting with AI.<br>An open source project created by <a href="https://bitfreak.info" target="_blank">Bitfreak Software</a>.</p>
+					<p><b>BTC Donations:</b> 18MWPVJA9mFLPFT3zht5twuNQmZBDzHoWF<br>
+					<b>ETH Donations:</b> 0x3cd1742c4AEB0e2e7D64530EB1393ff6E84b2e9F</p>
+					<hr>
+					<p><b>App Version:</b> <span id="aiui-version"></span><br>
+					<b>Electron Version:</b> <span id="electron-version"></span><br>
+					<b>Node.js Version:</b> <span id="node-version"></span><br>
+					<b>Chrome Version:</b> <span id="chrome-version"></span></p>
+				</center>
+			</div>
+		</div>
+	</div>
+</body>
+</html>
