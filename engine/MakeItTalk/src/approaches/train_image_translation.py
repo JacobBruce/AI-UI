@@ -18,21 +18,16 @@ import cv2
 import os, glob
 from src.dataset.image_translation.image_translation_dataset import vis_landmark_on_img, vis_landmark_on_img98, vis_landmark_on_img74
 
-
 from thirdparty.AdaptiveWingLoss.core import models
 from thirdparty.AdaptiveWingLoss.utils.utils import get_preds_fromhm
-
-import face_alignment
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#from thirdparty.face_alignment import FaceAlignment, LandmarksType
 
 class Image_translation_block():
 
     def __init__(self, opt_parser, single_test=False):
-        print('Run on device {}'.format(device))
+        print('Run image translation on device:', opt_parser.comp_dev)
 
-        # for key in vars(opt_parser).keys():
-        #     print(key, ':', vars(opt_parser)[key])
+        self.device = torch.device(opt_parser.comp_dev)
         self.opt_parser = opt_parser
 
         # model
@@ -41,21 +36,15 @@ class Image_translation_block():
         else:
             self.G = ResUnetGenerator(input_nc=6, output_nc=3, num_downs=6, use_dropout=False)
 
-        if (opt_parser.load_G_name != ''):
-            ckpt = torch.load(opt_parser.load_G_name)
-            try:
-                self.G.load_state_dict(ckpt['G'])
-            except:
-                tmp = nn.DataParallel(self.G)
-                tmp.load_state_dict(ckpt['G'])
-                self.G.load_state_dict(tmp.module.state_dict())
-                del tmp
+        if (opt_parser.load_i2i_name != ''):
+            ckpt = torch.load(opt_parser.load_i2i_name)
+            self.G.load_state_dict(ckpt)
 
-        if torch.cuda.device_count() > 1:
+        if opt_parser.comp_dev == "cuda" and torch.cuda.device_count() > 1:
             print("Let's use", torch.cuda.device_count(), "GPUs in G mode!")
             self.G = nn.DataParallel(self.G)
 
-        self.G.to(device)
+        self.G.to(self.device)
 
         if(not single_test):
             # dataset
@@ -82,10 +71,10 @@ class Image_translation_block():
             # criterion
             self.criterionL1 = nn.L1Loss()
             self.criterionVGG = VGGLoss()
-            if torch.cuda.device_count() > 1:
+            if opt_parser.comp_dev == "cuda" and torch.cuda.device_count() > 1:
                 print("Let's use", torch.cuda.device_count(), "GPUs in VGG model!")
                 self.criterionVGG = nn.DataParallel(self.criterionVGG)
-            self.criterionVGG.to(device)
+            self.criterionVGG.to(self.device)
 
             # optimizer
             self.optimizer = torch.optim.Adam(self.G.parameters(), lr=opt_parser.lr, betas=(0.5, 0.999))
@@ -103,8 +92,7 @@ class Image_translation_block():
             HG_BLOCKS = 4
             END_RELU = False
             NUM_LANDMARKS = 98
-
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            
             model_ft = models.FAN(HG_BLOCKS, END_RELU, GRAY_SCALE, NUM_LANDMARKS)
 
             checkpoint = torch.load(PRETRAINED_WEIGHTS)
@@ -118,7 +106,7 @@ class Image_translation_block():
                 model_weights.update(pretrained_weights)
                 model_ft.load_state_dict(model_weights)
             print('Load AWing model sucessfully')
-            if torch.cuda.device_count() > 1:
+            if opt_parser.comp_dev == "cuda" and torch.cuda.device_count() > 1:
                 print("Let's use", torch.cuda.device_count(), "GPUs for AWing!")
                 self.fa_model = nn.DataParallel(model_ft).to(self.device).eval()
             else:
@@ -127,15 +115,14 @@ class Image_translation_block():
             # ===========================================================
             #       online landmark alignment : FAN
             # ===========================================================
-            if(opt_parser.comb_fan_awing):
+            '''if(opt_parser.comb_fan_awing):
                 if(opt_parser.fan_2or3D == '2D'):
-                    self.predictor = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D,
-                                                                  device='cuda' if torch.cuda.is_available() else "cpu",
-                                                                  flip_input=True)
+                    self.predictor = FaceAlignment(landmarks_type=LandmarksType._2D,
+                                                   device=opt_parser.comp_dev,
+                                                   flip_input=True)
                 else:
-                    self.predictor = face_alignment.FaceAlignment(face_alignment.LandmarksType._3D,
-                                                                  device='cuda' if torch.cuda.is_available() else "cpu",
-                                                                  flip_input=True)
+                    self.predictor = FaceAlignment(device=opt_parser.comp_dev,
+                                                   flip_input=True)'''
 
     def __train_pass__(self, epoch, is_training=True):
         st_epoch = time.time()
@@ -157,14 +144,14 @@ class Image_translation_block():
                 fan_pred_landmarks = fan_pred_landmarks.reshape(-1, 68, 3).detach().cpu().numpy()
             elif(self.opt_parser.add_audio_in):
                 image_in, image_out, audio_in = batch
-                audio_in = audio_in.reshape(-1, 1, 256, 256).to(device)
+                audio_in = audio_in.reshape(-1, 1, 256, 256).to(self.device)
             else:
                 image_in, image_out = batch
 
             with torch.no_grad():
                 # # online landmark (AwingNet)
                 image_in, image_out = \
-                    image_in.reshape(-1, 3, 256, 256).to(device), image_out.reshape(-1, 3, 256, 256).to(device)
+                    image_in.reshape(-1, 3, 256, 256).to(self.device), image_out.reshape(-1, 3, 256, 256).to(self.device)
                 inputs = image_out
                 outputs, boundary_channels = self.fa_model(inputs)
                 pred_heatmap = outputs[-1][:, :-1, :, :].detach().cpu()
@@ -187,7 +174,7 @@ class Image_translation_block():
                     img_fl = vis_landmark_on_img98(img_fl, pred_fl)  # 98x2
                 img_fls.append(img_fl.transpose((2, 0, 1)))
             img_fls = np.stack(img_fls, axis=0).astype(np.float32) / 255.0
-            image_fls_in = torch.tensor(img_fls, requires_grad=False).to(device)
+            image_fls_in = torch.tensor(img_fls, requires_grad=False).to(self.device)
 
             if(self.opt_parser.add_audio_in):
                 # print(image_fls_in.shape, image_in.shape, audio_in.shape)
@@ -297,14 +284,14 @@ class Image_translation_block():
 
             if (self.opt_parser.add_audio_in):
                 image_in, image_out, audio_in = batch
-                audio_in = audio_in.reshape(-1, 1, 256, 256).to(device)
+                audio_in = audio_in.reshape(-1, 1, 256, 256).to(self.device)
             else:
                 image_in, image_out = batch
 
             # # online landmark (AwingNet)
             with torch.no_grad():
                 image_in, image_out = \
-                    image_in.reshape(-1, 3, 256, 256).to(device), image_out.reshape(-1, 3, 256, 256).to(device)
+                    image_in.reshape(-1, 3, 256, 256).to(self.device), image_out.reshape(-1, 3, 256, 256).to(self.device)
 
                 pred_landmarks = []
                 for j in range(image_in.shape[0] // 16):
@@ -322,7 +309,7 @@ class Image_translation_block():
                 img_fl = vis_landmark_on_img98(img_fl, pred_fl)  # 98x2
                 img_fls.append(img_fl.transpose((2, 0, 1)))
             img_fls = np.stack(img_fls, axis=0).astype(np.float32) / 255.0
-            image_fls_in = torch.tensor(img_fls, requires_grad=False).to(device)
+            image_fls_in = torch.tensor(img_fls, requires_grad=False).to(self.device)
 
             if (self.opt_parser.add_audio_in):
                 # print(image_fls_in.shape, image_in.shape, audio_in.shape)
@@ -338,7 +325,7 @@ class Image_translation_block():
             # random single frame
             # cv2.imwrite('random_img_{}.jpg'.format(i), np.swapaxes(image_out[5].numpy(),0, 2)*255.0)
 
-            image_in, image_out = image_in.to(device), image_out.to(device)
+            image_in, image_out = image_in.to(self.device), image_out.to(self.device)
 
             writer = cv2.VideoWriter('tmp_{:04d}.mp4'.format(i), cv2.VideoWriter_fourcc(*'mjpg'), 25, (256*4, 256))
 
@@ -399,7 +386,7 @@ class Image_translation_block():
                                   torch.tensor(image_out, requires_grad=False)
 
             image_in, image_out = image_in.reshape(-1, 6, 256, 256), image_out.reshape(-1, 3, 256, 256)
-            image_in, image_out = image_in.to(device), image_out.to(device)
+            image_in, image_out = image_in.to(self.device), image_out.to(self.device)
 
             g_out = self.G(image_in)
             g_out = torch.tanh(g_out)

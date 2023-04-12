@@ -10,10 +10,17 @@
 	const { ipcRenderer } = require('electron');
 	
 	const pedit_img_html = '<img id="prompt_edit" class="edit_btn" src="./img/edit_w.png" width="15" onclick="ToggleEditPrompt()" />';
+	const default_ip = "Chat log between HUMAN_NAME and BOT_NAME on DATE";
+	const pygmalion_ip = "BOT_NAME's Persona: A helpful AI assistant who can use the [AI_IMG] tag to generate images from a description.\n<START>\nHUMAN_NAME: show me an image of a cyberpunk cityscape\nBOT_NAME: [AI_IMG]cyberpunk cityscape[/AI_IMG]";
+	const bbcode_ip = "Use the [CODE] tag to post a code snippet. Example: [CODE]int abc = 123;[/CODE]\nUse the [AI_IMG] tag to generate an image from a description using AI. Example: [AI_IMG]cute kitten[/AI_IMG]";
+	var ip_vals = { chat:default_ip, pygmalion:pygmalion_ip, bbcode:bbcode_ip };
 	
 	var avatar_vid = null;
+	var speech_audio = null;
 	var loop_timer = null;
 	var dot_count = 0;
+	var rnd_int = 0;
+	var btn_state = true;
 	var thinking = false;
 	var generating = false;
 	var chat_exp = false;
@@ -28,33 +35,57 @@
 	var speech_vol = 1.0;
 	var speech_rate = 200;
 	var pitch_shift = 0;
+	var talk_mode = 0;
 
 	var max_mm = 5;
 	var max_rl = 50;
 	var min_rl = 1;;
 	var b_temp = 0.8;
 	var prompt_p = 0;
+	var top_k = 50;
+	var top_p = 1.0;
+	var typical_p = 1.0;
+	var rep_penalty = 1.0;
 	
 	var model_type = 0;
 	var comp_dev = 0;
 	var script_dir = '';
+	var model_args = ''
 	var model_dir = '';
+	var sd_model = '';
 	var python_bin = '';
 	var avatar_mp4 = '';
 	var avatar_img = '';
 	
-	function playVideo() {
-		let rnd = Math.floor(Math.random() * 999999);
-		$('#avatar_source').prop('src', avatar_mp4+'?rnd='+rnd);
+	function RandInt(max_val=9999999) {
+		let rnd = Math.floor(Math.random() * max_val);
+		while (rnd_int == rnd)
+			rnd = Math.floor(Math.random() * max_val);
+		rnd_int = rnd;
+		return rnd;
+	}
+	
+	function PlayVideo() {
+		$('#avatar_source').prop('src', avatar_mp4+'?rnd='+RandInt());
 		avatar_vid.load();
 		avatar_vid.play(); 
 	}
 
-	/*function pauseVideo() { 
-		if (!avatar_vid.paused) {
-			avatar_vid.pause(); 
+	function PlayAudio(audio_file) {
+		if (speech_audio !== null && !speech_audio.paused) speech_audio.pause();
+		speech_audio = new Audio('file://'+audio_file+'?rnd='+RandInt());
+		speech_audio.onended = function() { $('#read_btn').html('TEXT TO SPEECH'); };
+		speech_audio.play();
+	}
+	
+	function ToggleAudio() {
+		if (speech_audio === null) return;
+		if (speech_audio.paused) {
+			speech_audio.play();
+		} else {
+			speech_audio.pause();
 		}
-	}*/
+	}
 	
 	function EncodeHTML(txt) {
 		return txt.replaceAll('&', '&amp;').
@@ -67,6 +98,31 @@
 			replaceAll('\t', '&nbsp;&nbsp;');
 	}
 	
+	function ConvertAIBB(txt) {
+		return txt.replaceAll("[AI_UI_BR]", "<br>").replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_LF]", "\n").
+			replaceAll("[CODE START]", '</p><pre class="code_box">').replaceAll("[CODE END]", '</pre><p class="msg_p">').
+			replaceAll("[AI_IMG NUM_", '</p><img class="chat_img" src="file://'+script_dir+'/chat_images/image_').
+			replaceAll("_CHAT_IMG]", '.png" title="').replaceAll("[AI_IMG END]", '" onclick="ShowInFolder(this)"><p class="msg_p">');
+	}
+	
+	function ConvertBB(txt) {
+		return txt.replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_LF]", "\n").
+			replaceAll('[CODE START]', '</p><pre class="code_box">').replaceAll('[CODE END]', '</pre><p class="msg_p">');
+	}
+	
+	function EncodeBB(bbcode) {
+		let result = bbcode;
+		while (result.includes('[CODE]') && result.includes('[/CODE]')) {
+			const tag_start = result.indexOf("[CODE]") + 6;
+			const tag_end = result.indexOf("[/CODE]");
+			if (tag_start >= tag_end) break;
+			const code_txt = result.substring(tag_start, tag_end);
+			const code_enc = code_txt.replaceAll("\t", "[AI_UI_TAB]").replaceAll("\n", "[AI_UI_LF]");
+			result = result.replace('[CODE]'+code_txt+'[/CODE]', '[CODE START]'+code_enc+'[CODE END]');
+		}
+		return result;
+	}
+
 	function TrimLast(str, chr) {
 		if (str.endsWith(chr)) {
 			return str.slice(0, -1);
@@ -150,7 +206,7 @@
 	
 	function StartThinking() {
 		thinking = true;
-		var scroll_box = $('#chat_log');
+		let scroll_box = $('#chat_log');
 		scroll_box.animate({scrollTop: scroll_box.prop("scrollHeight")}, 300, 'linear', function() {
 			$('#thinking').html('');
 			$('#thinking').show();
@@ -161,24 +217,43 @@
 	
 	function StopThinking() {
 		thinking = false;
-		var scroll_box = $('#chat_log');
+		let scroll_box = $('#chat_log');
 		scroll_box.animate({scrollTop: scroll_box.prop("scrollHeight")});
 		$('#thinking').hide();
 		clearInterval(loop_timer);
 	}
 	
+	function DisExtraButtons(bool_val) {
+		$('#redo_btn').prop('disabled', bool_val);
+		$('#cont_btn').prop('disabled', bool_val);
+		$('#clear_btn').prop('disabled', bool_val);
+	}
+	
+	function DisableButtons(bool_val, load_state=false) {
+		let new_state = bool_val;
+		if (load_state) {
+			new_state = bool_val ? true : btn_state;
+		} else {
+			btn_state = bool_val;
+		}
+		DisExtraButtons(new_state);
+		$('#apply_btn').prop('disabled', bool_val);
+		$('#gen_btn').prop('disabled', bool_val);
+		$('.config_btn').prop('disabled', bool_val);
+	}
+	
 	ipcRenderer.on('bot-msg', (event, payload) => {
-		const bot_msg = EncodeHTML(payload.msg.trim()).replaceAll("[AI_UI_BR]", "<br>");
-		const msg_html = '<div class="bmsg_box"><p class="bot_msg">'+bot_msg+'</p></div>';
-		$('#chat_log').append(msg_html);
-		$('#redo_btn').prop('disabled', false);
-		$('#cont_btn').prop('disabled', false);
-		$('#clear_btn').prop('disabled', false);
-		$('#apply_btn').prop('disabled', false);
-		$('#avatar_img').hide();
-		$('#avatar_vid').show();
+		const bot_msg = ConvertAIBB(EncodeHTML(payload.msg.trim()));
+		const msg_html = '<div class="bmsg_box"><div class="bot_msg"><p class="msg_p">'+bot_msg+'</p></div></div>';
+		$('#chat_log').append(msg_html.replaceAll('<p class="msg_p"></p>', ''));
+		$('.msg_pad').remove();
+		DisableButtons(false);
 		StopThinking();
-		playVideo();
+		if (payload.got_vid && talk_mode == 0) {
+			$('#avatar_img').hide();
+			$('#avatar_vid').show();
+			PlayVideo();
+		}
 	});
 	
 	function SendMsg() {
@@ -188,45 +263,39 @@
 		let html_msg = '';
 		if (chat_exp) {
 			message = $('#area_inp').val().trim();
-			html_msg = EncodeHTML(message).replaceAll("\n", "<br>");
+			html_msg = ConvertBB(EncodeHTML(EncodeBB(message)).replaceAll("\n", "<br>"));
 			message = message.replaceAll("\n", "[AI_UI_BR]");
 			$('#area_inp').val('');
 		} else {
 			message = $('#text_inp').val().trim();
-			html_msg = EncodeHTML(message);
+			html_msg = ConvertBB(EncodeHTML(EncodeBB(message)));
 			$('#text_inp').val('');
 		}
 		if (message == '') return;
-		html_msg = '<div class="umsg_box"><p class="chat_msg">'+html_msg+'</p></div>';
-		$('#chat_log').append(html_msg);
-		$('#redo_btn').prop('disabled', true);
-		$('#cont_btn').prop('disabled', true);
-		$('#clear_btn').prop('disabled', true);
-		$('#apply_btn').prop('disabled', true);
+		html_msg = '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+html_msg+'</p></div></div>';
+		$('#chat_log').append(html_msg.replaceAll('<p class="msg_p"></p>', ''));
 		ipcRenderer.send('send-msg', { msg: message });
+		DisableButtons(true);
 		StartThinking();
 	}
 	
 	function RedoLast() {
 		$('.bmsg_box').last().remove();
-		$('#redo_btn').prop('disabled', true);
-		$('#cont_btn').prop('disabled', true);
-		$('#clear_btn').prop('disabled', true);
-		$('#apply_btn').prop('disabled', true);
+		DisableButtons(true);
 		ipcRenderer.send('send-msg', { msg: 'redo_last' });
 		StartThinking();
 	}
 	
 	function ContChat() {
-		$('#redo_btn').prop('disabled', true);
-		$('#cont_btn').prop('disabled', true);
-		$('#clear_btn').prop('disabled', true);
-		$('#apply_btn').prop('disabled', true);
+		DisableButtons(true);
 		ipcRenderer.send('send-msg', { msg: 'cont_chat' });
+		$('#chat_log').append('<div class="msg_pad"></div>');
 		StartThinking();
 	}
 	
 	function ClearChat() {
+		btn_state = true;
+		DisExtraButtons(true);
 		$('#chat_log').html('');
 		ipcRenderer.send('send-msg', { msg: 'clear_chat' });
 	}
@@ -275,7 +344,25 @@
 	
 	function CopyGenTxt() {
 		const gen_txt = $('#gen_result').html().replaceAll("<br>", "\n");
-		ipcRenderer.send('copy-text', { txt: gen_txt })
+		ipcRenderer.send('copy-text', { txt: gen_txt });
+	}
+	
+	function ReadGenTxt() {
+		if ($('#read_btn').html() == 'TEXT TO SPEECH') {
+			if (thinking || generating) {
+				ipcRenderer.send('show-alert', { msg: 'The engine is busy with another task.' });
+				return;
+			}
+			const gen_txt = $('#gen_result').html().replaceAll("<br>", "[AI_UI_BR]");
+			if (gen_txt != '') $('#read_btn').html('STOP READING');
+			ipcRenderer.send('read-text', { txt: gen_txt });
+		} else if ($('#read_btn').html() == 'STOP READING') {
+			$('#read_btn').html('CONTINUE READING');
+			ToggleAudio();
+		} else {
+			$('#read_btn').html('STOP READING');
+			ToggleAudio();
+		}
 	}
 	
 	function GenText() {
@@ -288,19 +375,27 @@
 			start_txt = $('#gen_text_inp').val();
 		}
 		if (start_txt == '') return;
-		$('#gen_btn').prop('disabled', true);
+		DisableButtons(true, true);
 		$('#gen_result').html('Generating text ...');
+		const max_genl = $('#gen_max_len').val();
+		const min_genl = $('#gen_min_len').val();
 		const gen_temp = $('#gen_temp').val();
-		const max_genl = $('#max_gen_len').val();
-		const min_genl = $('#min_gen_len').val();
-		ipcRenderer.send('gen-text', { txt: start_txt, max: max_genl, min: min_genl, temp: gen_temp });
+		const gen_topk = $('#gen_top_k').val();
+		const gen_topp = $('#gen_top_p').val();
+		const gen_typp = $('#gen_typ_p').val();
+		const gen_repp = $('#gen_rep_p').val();
+		ipcRenderer.send('gen-text', {
+			txt: start_txt, max: max_genl, min: min_genl, temp: gen_temp,
+			top_k: gen_topk, top_p: gen_topp, typ_p: gen_typp, rep_p: gen_repp
+		});
 		StartGenerating();
 	}
 	
 	ipcRenderer.on('gen-result', (event, payload) => {
 		const txt_html = EncodeHTML(payload.txt).replaceAll("[AI_UI_BR]", "<br>");
-		$('#gen_btn').prop('disabled', false);
+		DisableButtons(false, true);
 		$('#gen_result').html(txt_html);
+		$('#read_btn').html('TEXT TO SPEECH');
 		StopGenerating();
 	});
 
@@ -310,27 +405,27 @@
 		if (payload.state === true) {
 			const d = new Date();
 			const curr_date = (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
-			prompt = 'Chat log between '+human_name+' and '+bot_name+' on '+curr_date;
+			const pyg_ip = pygmalion_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
+			prompt = default_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
+			ip_vals = { chat:prompt, pygmalion:pyg_ip, bbcode:bbcode_ip };
 			$('#prompt_txta').val(prompt);
+			$('#ip_select').val('default');
 			$('#chat_log').html('<div class="prompt"><p id="init_prompt" class="prompt_txt">'+
 				EncodeHTML(prompt)+' '+pedit_img_html+'</p></div>');
 			$('#gen_result').html('');
 		} else {
 			$('#send_btn').prop('disabled', true);
-			$('#redo_btn').prop('disabled', true);
-			$('#cont_btn').prop('disabled', true);
-			$('#clear_btn').prop('disabled', true);
-			$('#apply_btn').prop('disabled', true);
-			$('#gen_btn').prop('disabled', true);
+			$('#read_btn').prop('disabled', true);
+			DisableButtons(true);
 			StopThinking();
 			StopGenerating();
 		}
 	});
 	
 	ipcRenderer.on('ai-ready', (event, payload) => {
-		$('#apply_btn').prop('disabled', false);
 		$('#send_btn').prop('disabled', false);
-		$('#gen_btn').prop('disabled', false);
+		$('#read_btn').prop('disabled', false);
+		DisableButtons(false, true);
 		StopThinking();
 		StopGenerating();
 	});
@@ -344,6 +439,20 @@
 		voice_arr.push(payload);
 	});
 	
+	ipcRenderer.on('play-audio', (event, payload) => {
+		PlayAudio(payload.file);
+	});
+	
+	ipcRenderer.on('append-log', (event, payload) => {
+		$('#log_box').append('<pre class="console_log">'+EncodeHTML(payload.msg)+'</pre>');
+	});
+	
+	ipcRenderer.on('got-avatar', (event, payload) => {
+		$('#loading_box').hide();
+		if (payload.got != "true")
+			ipcRenderer.send('show-alert', { type: "error", msg: "Unable to detect face in image!" });
+	});
+	
 	ipcRenderer.on('prompt-msg', (event, payload) => {
 		$('#init_prompt').html(payload.msg);
 		$('#gen_result').html(payload.msg);
@@ -353,6 +462,7 @@
 		const chat_config = payload.configs.chat;
 		const app_config = payload.configs.app;
 		const ai_config = payload.configs.ai;
+		const gen_config = payload.configs.gen;
 		
 		human_name = chat_config.human_name;
 		bot_name = chat_config.bot_name;
@@ -360,11 +470,14 @@
 		speech_vol = chat_config.speech_vol;
 		speech_rate = chat_config.speech_rate;
 		pitch_shift = chat_config.pitch_shift;
+		talk_mode = chat_config.talk_mode;
 
 		avatar_img = app_config.avatar_img;
 		script_dir = app_config.script_dir;
 		python_bin = app_config.python_bin;
 		model_dir = app_config.model_dir;
+		sd_model = app_config.sd_model;
+		model_args = app_config.model_args;
 		model_type = app_config.model_type;
 		comp_dev = app_config.comp_dev;
 
@@ -373,6 +486,10 @@
 		min_rl = ai_config.min_res;
 		b_temp = ai_config.base_temp;
 		prompt_p = ai_config.prompt_p;
+		top_k = ai_config.top_k;
+		top_p = ai_config.top_p;
+		typical_p = ai_config.typical_p;
+		rep_penalty = ai_config.rep_penalty;
 
 		if (payload.skip_inputs) return;
 
@@ -387,6 +504,8 @@
 		$('#script_dir').val(script_dir);
 		$('#python_bin').val(python_bin);
 		$('#model_dir').val(model_dir);
+		$('#sd_model').val(sd_model);
+		$('#model_args').val(model_args);
 		$('#mtype_select').val(model_type);
 		$('#device_select').val(comp_dev);
 
@@ -395,19 +514,34 @@
 		$('#min_res_len').val(min_rl);
 		$('#base_temp').val(b_temp);
 		$('#pp_select').val(prompt_p);
+		$('#top_k').val(top_k);
+		$('#top_p').val(top_p);
+		$('#typical_p').val(typical_p);
+		$('#rep_penalty').val(rep_penalty);
+
+		$('#gen_max_len').val(gen_config.max_len);
+		$('#gen_min_len').val(gen_config.min_len);
+		$('#gen_temp').val(gen_config.temp);
+		$('#gen_top_k').val(gen_config.top_k);
+		$('#gen_top_p').val(gen_config.top_p);
+		$('#gen_typ_p').val(gen_config.typical_p);
+		$('#gen_rep_p').val(gen_config.rep_penalty);
 
 		avatar_mp4 = 'file://'+script_dir+'/MakeItTalk/examples/face_pred_fls_speech_audio_embed.mp4';
 		$('#avatar_source').prop('src', avatar_mp4);
+		$('#tmode_img').prop('src', './img/talk_'+talk_mode+'.png');
 	});
 	
 	function ApplySettings() {
-		let sdir = TrimLast($('#script_dir').val().replaceAll('\\', '/'), '/');
-		let mdir = TrimLast($('#model_dir').val().replaceAll('\\', '/'), '/');
-		let pbin = $('#python_bin').val().replaceAll('\\', '/');
+		let sdir = TrimLast($('#script_dir').val().trim().replaceAll('\\', '/'), '/');
+		let mdir = TrimLast($('#model_dir').val().trim().replaceAll('\\', '/'), '/');
+		let sddir = TrimLast($('#sd_model').val().trim().replaceAll('\\', '/'), '/');
+		let pbin = $('#python_bin').val().trim().replaceAll('\\', '/');
+		let margs = $('#model_args').val().replaceAll('\\', '/');
 		let mtype = $('#mtype_select').val();
 		let cdev = $('#device_select').val();
-		if (script_dir != sdir || python_bin != pbin || model_dir != mdir || model_type != mtype || comp_dev != cdev) {
-			ipcRenderer.send('config-app', { script_dir: sdir, python_bin: pbin, model_dir: mdir, model_type: mtype, comp_dev: cdev });
+		if (script_dir != sdir || python_bin != pbin || model_dir != mdir || sd_model != sddir || model_args != margs || model_type != mtype || comp_dev != cdev) {
+			ipcRenderer.send('config-app', { script_dir: sdir, python_bin: pbin, model_dir: mdir, sd_model: sddir, model_args: margs, model_type: mtype, comp_dev: cdev });
 		}
 	}
 	
@@ -417,9 +551,17 @@
 			const maxrl = $('#max_res_len').val();
 			const minrl = $('#min_res_len').val();
 			const btemp = $('#base_temp').val();
+			const topk = $('#top_k').val();
+			const topp = $('#top_p').val();
+			const typp = $('#typical_p').val();
+			const repp = $('#rep_penalty').val();
 			const promptp = $('#pp_select').find(':selected').val();
-			if (max_mm != maxmm || max_rl != maxrl || min_rl != minrl || b_temp != btemp || prompt_p != promptp) {
-				ipcRenderer.send('config-ai', { max_mmem: maxmm, max_rlen: maxrl, min_rlen: minrl, temp: btemp, pp: promptp });
+			if (max_mm != maxmm || max_rl != maxrl || min_rl != minrl || b_temp != btemp || 
+			topk != top_k || topp != top_p || typp != typical_p || repp != rep_penalty || prompt_p != promptp) {
+				ipcRenderer.send('config-ai', {
+					max_mmem: maxmm, max_rlen: maxrl, min_rlen: minrl, temp: btemp, 
+					tk: topk, tp: topp, typ: typp, rp: repp, pp: promptp
+				});
 				ipcRenderer.send('show-alert', { msg: 'New settings applied.' });
 			}
 		} else {
@@ -473,9 +615,16 @@
 		ToggleEditPrompt();
 	}
 	
+	function ChangeTalkMode() {
+		if (++talk_mode>2) talk_mode = 0;
+		$('#tmode_img').prop('src', './img/talk_'+talk_mode+'.png');
+		ipcRenderer.send('update-talk-mode', talk_mode);
+	}
+	
 	function ChangeAvatar() {
 		window.aiuiAPI.openAvatar().then(result => {
 			if (result === false) return;
+			$('#loading_box').show();
 			avatar_img = result.replaceAll('\\', '/');
 			ipcRenderer.send('update-avatar', avatar_img);
 			$('#avatar_img').prop('src', 'file://'+avatar_img);
@@ -503,6 +652,12 @@
 			$('#app-version').html(result);
 			$('#aiui-version').html(result);
 		});
+	}
+	
+	function ShowInFolder(elem) {
+		const file_path = $(elem).prop('src').
+			replace('file:///', '').replace('file://', '');
+		ipcRenderer.send('show-in-dir', file_path);
 	}
 	
 	function RestartScript() {
@@ -538,11 +693,32 @@
 		$('#area_inp').on('keydown', function(e) {
 			if (e.key === 'Tab' || e.keyCode == 9) {
 				e.preventDefault();
-				var s = this.selectionStart;
+				let s = this.selectionStart;
 				$(this).val(function(i, v) {
 					return v.substring(0, s) + "\t" + v.substring(this.selectionEnd)
 				});
 				this.selectionEnd = s + 1;
+			}
+		});
+		
+		$('#avatar_img').on('load', function() {
+			if ($(this).prop('naturalWidth') != 256 || $(this).prop('naturalHeight') != 256) {
+				ipcRenderer.send('show-alert', { msg: 'Avatar image must have a width and height of 256x256' });
+			}
+		});
+		
+		$('#ip_select').on('change', function() {
+			let ip_sel = $(this).find(':selected').val();
+			switch (ip_sel) {
+			case 'default':
+				$('#prompt_txta').val(ip_vals.chat);
+				break;
+			case 'pygmalion':
+				$('#prompt_txta').val(ip_vals.pygmalion);
+				break;
+			case 'bbcode':
+				$('#prompt_txta').val(ip_vals.bbcode);
+				break;
 			}
 		});
 	});
@@ -551,8 +727,10 @@
 <body>
 	<div id="container">
 
+		<center id="loading_box" class="hidden"><div id="loading_msg">Processing avatar image... please wait.</div></center>
+
 		<div id="main_menu">
-			<button class="menu_btn menu_sel" onclick="ChatPage(this)">CHAT BOT</button><button class="menu_btn" onclick="TextPage(this)">TEXT GEN</button><!--<button class="menu_btn" onclick="ConsolePage(this)">CONSOLE</button>--><button class="menu_btn" onclick="ConfigPage(this)">SETTINGS</button><button class="menu_btn" onclick="AboutPage(this)">ABOUT</button>
+			<button class="menu_btn menu_sel" onclick="ChatPage(this)">CHAT BOT</button><button class="menu_btn" onclick="TextPage(this)">TEXT GEN</button><button class="menu_btn" onclick="ConsolePage(this)">CONSOLE</button><button class="menu_btn" onclick="ConfigPage(this)">SETTINGS</button><button class="menu_btn" onclick="AboutPage(this)">ABOUT</button>
 			<span id="menu_txt">AI UI v<span id="app-version"></span></b>
 		</div>
 		
@@ -580,6 +758,12 @@
 							<textarea id="prompt_txta" class="txt_area"></textarea>
 						</div>
 						<div class="dialog_foot">
+							<label id="ips_label">Useful Prompts:</label>
+							<select id="ip_select" class="cfg_drp">
+								<option value="default" selected>Default</option>
+								<option value="pygmalion">Pygmalion Format</option>
+								<option value="bbcode">BBCode Instructions</option>
+							</select>
 							<button class="btn dialog_btn" onclick="ApplyNewPrompt()">APPLY</button>
 							<button class="btn dialog_btn" onclick="ToggleEditPrompt()">CANCEL</button>
 						</div>
@@ -592,7 +776,8 @@
 						<video id="avatar_vid" class="hidden" width="256" height="256">
 							<source id="avatar_source" src="" type="video/mp4">
 						</video>
-						<img id="avatar_btn" width="42" height="42" src="./img/folder_b.png" onclick="ChangeAvatar()" />
+						<button id="tmode_btn" class="config_btn" onclick="ChangeTalkMode()" disabled><img id="tmode_img" width="42" height="42" src="./img/talk_0.png" /></button>
+						<button id="avatar_btn" class="config_btn" onclick="ChangeAvatar()" disabled><img width="42" height="42" src="./img/folder_b.png" /></button>
 					</div>
 					<center id="config_box">
 						<div id="basic_config">
@@ -623,6 +808,14 @@
 								<option value="1">Permanent</option>
 								<option value="2">No Prompt</option>
 							</select>
+							<span class="cfg_lbl">Top-K <img class="help_icon" width="16" height="16" title="Only samples from the most probable K vocabulary tokens. Set to 0 to disable Top-K sampling." /></span>
+							<input type="number" id="top_k" class="cfg_num" min="0" max="1000" value="50">
+							<span class="cfg_lbl">Top-p <img class="help_icon" width="16" height="16" title="Only the smallest set of most probable tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+							<input type="number" id="top_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+							<span class="cfg_lbl">Typical-p <img class="help_icon" width="16" height="16" title="Only the smallest set of the most locally typical tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+							<input type="number" id="typical_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+							<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
+							<input type="number" id="rep_penalty" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
 						</div>
 						<button id="apply_btn" class="btn cfg_btn" onclick="ApplyConfig()" disabled>APPLY</button>
 						<button id="adv_btn" class="btn cfg_btn" onclick="ToggleConfig()">AI SETTINGS</button>
@@ -648,18 +841,34 @@
 				
 				<div id="gen_side">
 					<center>
+						<h4 class="cfg_title">GENERATION SETTINGS</h4>
 						<span class="cfg_lbl">Max Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
-						<input type="number" id="max_gen_len" class="cfg_num" min="1" max="10000" value="50">
+						<input type="number" id="gen_max_len" class="cfg_num" min="1" max="10000" value="50">
 						<span class="cfg_lbl">Min Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
-						<input type="number" id="min_gen_len" class="cfg_num" min="1" max="999" value="1">
+						<input type="number" id="gen_min_len" class="cfg_num" min="1" max="999" value="1">
 						<span class="cfg_lbl">Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable." /></span>
 						<input type="number" id="gen_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
+						<h4 class="cfg_title">ADVANCED SETTINGS</h4>
+						<span class="cfg_lbl">Top-K <img class="help_icon" width="16" height="16" title="Only samples from the most probable K vocabulary tokens. Set to 0 to disable Top-K sampling." /></span>
+						<input type="number" id="gen_top_k" class="cfg_num" min="0" max="1000" value="50">
+						<span class="cfg_lbl">Top-p <img class="help_icon" width="16" height="16" title="Only the smallest set of most probable tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+						<input type="number" id="gen_top_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+						<span class="cfg_lbl">Typical-p <img class="help_icon" width="16" height="16" title="Only the smallest set of the most locally typical tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+						<input type="number" id="gen_typ_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+						<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
+						<input type="number" id="gen_rep_p" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
+						
 						<button id="copy_btn" class="btn cfg_btn" onclick="CopyGenTxt()">COPY GENERATED TEXT</button>
+						<button id="read_btn" class="btn cfg_btn" onclick="ReadGenTxt()" disabled>TEXT TO SPEECH</button>
 					</center>
 				</div>
 			</div>
 
-			<div id="console_tab" class="hidden"></div>
+			<div id="console_tab" class="hidden">
+				<div id="log_box">
+					<pre class="console_log">Application started</pre>
+				</div>
+			</div>
 
 			<div id="config_tab" class="hidden">
 				<center id="settings">
@@ -668,16 +877,22 @@
 					<div class="browse_btn"></div> <input type="text" id="script_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('script_dir')">BROWSE</button>
 					<span class="cfg_lbl">Python Binary <img class="help_icon" width="16" height="16" title="The location of your python binary (on Windows it's a file called python.exe)" /></span>
 					<div class="browse_btn"></div> <input type="text" id="python_bin" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFile('python_bin')">BROWSE</button>
+					<span class="cfg_lbl">StableDiff Folder <img class="help_icon" width="16" height="16" title="The directory containing the Stable Diffusion model (optional, allows chat AI to generate images)" /></span>
+					<div class="browse_btn"></div> <input type="text" id="sd_model" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('sd_model')">BROWSE</button>
 					<span class="cfg_lbl">Model Folder <img class="help_icon" width="16" height="16" title="The directory containing the AI model (usually has a pytorch_model.bin file in it)" /></span>
 					<div class="browse_btn"></div> <input type="text" id="model_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('model_dir')">BROWSE</button>
 					<span class="cfg_lbl">Model Type <img class="help_icon" width="16" height="16" title="The type of AI model in the model folder (should be a text generation model)." /></span>
 					<select id="mtype_select" class="cfg_drp">
 						<option value="0" selected>Auto-detect</option>
 						<option value="1">GPT-Neo</option>
+						<option value="2">Llama/Alpaca</option>
 					</select>
-					<span class="cfg_lbl">Compute Device <img class="help_icon" width="16" height="16" title="If your GPU doesn't support CUDA or you don't have enough VRAM then select the CPU option." /></span>
+					<span class="cfg_lbl">Model Setup <img class="help_icon" width="16" height="16" title="Optional setup arguments. Example: model_adapter=C:/model/adapter, use_float16=false, sd_use_float16=true, sd_safety_check=false, reserve_vram_mb=3200" /></span>
+					<input type="text" id="model_args" class="cfg_txt" value="" placeholder="Setup arguments (comma separated)">
+					<span class="cfg_lbl">Compute Device <img class="help_icon" width="16" height="16" title="If your GPU doesn't support CUDA or you don't have enough VRAM then select the CPU or Auto option. Auto will try to use all available compute devices." /></span>
 					<select id="device_select" class="cfg_drp">
-						<option value="cpu" selected>CPU</option>
+						<option value="auto" selected>Auto</option>
+						<option value="cpu">CPU</option>
 						<option value="cuda">GPU</option>
 					</select>
 					<br><br>

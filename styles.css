@@ -145,9 +145,9 @@ footer {
 	border: none;
 }
 
-#copy_btn {
+#copy_btn, #read_btn {
 	width: 180px;
-	margin: 30px;
+	margin: 20px 30px 0px 30px;
 }
 
 #thinking, #generating {
@@ -161,13 +161,23 @@ footer {
 	display: none;
 }
 
-#chat_side, #gen_side {
+#chat_side {
 	width: 300px;
 	position: absolute;
 	top: 0px;
 	right: 0px;
 	bottom: 0px;
 	background-color: #222429;
+}
+
+#gen_side {
+	width: 300px;
+	position: absolute;
+	top: 0px;
+	right: 0px;
+	bottom: 0px;
+	background-color: #222429;
+	overflow-y: auto;
 }
 
 #avatar_box {
@@ -184,13 +194,28 @@ footer {
     right: 32px;
     top: 32px;
 	display: none;
+	background-color: transparent;
+	padding: 0px;
+	border: none;
 }
 
-#avatar_btn:hover {
+#tmode_btn {
+	position: absolute;
+    right: 84px;
+    top: 32px;
+	display: none;
+	background-color: transparent;
+	padding: 0px;
+	border: none;
+}
+
+#avatar_btn:hover:enabled, 
+#tmode_btn:hover:enabled {
 	cursor: pointer;
 }
 
-#avatar_box:hover #avatar_btn {
+#avatar_box:hover #avatar_btn,
+#avatar_box:hover #tmode_btn {
 	display: block;
 }
 
@@ -276,6 +301,24 @@ footer {
 	border-right: 1px solid #a9bbde;
 }
 
+#loading_box {
+	position: absolute;
+	top: 0px;
+	left: 0px;
+	right: 0px;
+	bottom: 0px;
+	z-index: 999;
+	background-color: rgba(125,125,150,0.5);
+}
+
+#loading_msg {
+	width: fit-content;
+	background-color: #2e2e38;
+	border: 1px solid #a9bbde;
+	padding: 20px;
+	margin-top: 100px;
+}
+
 #edit_dialog {
 	position: absolute;
 	top: 100px;
@@ -283,11 +326,20 @@ footer {
 	right: 100px;
 	background-color: #2e2e38;
 	border: 1px solid #a9bbde;
+	z-index: 99;
 }
 
 #prompt_txta {
 	height: 138px;
     width: -webkit-fill-available;
+}
+
+#ips_label {
+	margin-left: 10px;
+}
+
+#ip_select {
+	width: 175px;
 }
 
 #settings_btn {
@@ -310,6 +362,15 @@ footer {
 	overflow-y: auto;
 }
 
+#console_tab, #config_tab, #about_tab {
+	overflow-y: auto;
+	max-height: 100%;
+}
+
+#log_box {
+	margin: 10px;
+}
+
 .hidden {
 	display: none;
 }
@@ -326,6 +387,7 @@ footer {
 	display: inline-block;
 	width: 75px;
 	margin: 0px 4px;
+	float: right;
 	line-height: 28px !important;
 }
 
@@ -342,8 +404,7 @@ footer {
 }
 
 .dialog_foot {
-	padding: 10px;
-	text-align: center;
+	margin: 10px 5px 10px 0px;
 }
 
 .cfg_btn {
@@ -477,6 +538,11 @@ footer {
 	display: block;
 }
 
+.cfg_title {
+	margin: 20px 0px 0px 0px;
+	font-weight: lighter;
+}
+
 .prompt {
 	margin: 10px;
 	text-align: center;
@@ -491,6 +557,14 @@ footer {
 	line-height: 22px;
 }
 
+.msg_p {
+	margin: 0px;
+}
+
+.msg_pad {
+	height: 32px;
+}
+
 .umsg_box {
 	width: 100%;
 }
@@ -498,6 +572,26 @@ footer {
 .bmsg_box {
 	width: 100%;
 	text-align: right;
+}
+
+.code_box {
+	background-color: rgba(125,125,135,0.4);
+	border: 1px solid rgba(130,130,135,0.5);
+	padding: 8px;
+	margin: 6px 0px;
+	border-radius: 6px;
+	text-align: left;
+	white-space: pre-wrap;
+}
+
+.chat_img {
+	width: 100%;
+	max-width: 512px;
+	border-radius: 6px;
+	margin-top: 4px;
+	cursor: pointer;
+	position: relative;
+	z-index: 1;
 }
 
 .chat_msg {
@@ -521,4 +615,13 @@ footer {
 .help_icon {
 	content: url(./img/help.png);
 	cursor: help;
+}
+
+.console_log {
+	background-color: #30333b;
+	border: 1px solid #575764;
+	padding: 6px;
+	margin: 0px 0px 10px 0px;
+	overflow-x: auto;
+	white-space: pre-wrap;
 }

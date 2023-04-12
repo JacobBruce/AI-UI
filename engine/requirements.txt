@@ -1,12 +1,15 @@
 tensorflow
 transformers
 tensorboardx
+diffusers
+accelerate
 matplotlib
 pyttsx3
 ffmpeg-python
 opencv-python
-face_alignment
 scikit-learn
+sentencepiece
+peft
 pydub
 pynormalize
 soundfile

@@ -60,6 +60,10 @@ function createWindow() {
 	});
 }
 
+function getAppVersion() {
+	return app.getVersion();
+}
+
 async function handleJpgOpen() {
 	const { canceled, filePaths } = await dialog.showOpenDialog(win, {properties: ['openFile'], filters:[{ name: 'JPG Image', extensions: ['jpg', 'jpeg'] }]});
 	if (canceled) {
@@ -87,9 +91,10 @@ async function handleDirOpen() {
 	}
 }
 
-function getAppVersion() {
-	return app.getVersion();
-}
+ipcMain.on('show-in-dir', (event, payload) => {
+	const norm_path = path.normalize(payload);
+	if (fs.existsSync(norm_path)) shell.showItemInFolder(norm_path);
+});
 
 ipcMain.on('copy-text', (event, payload) => {
 	if (payload.txt != '') {
@@ -101,7 +106,8 @@ ipcMain.on('copy-text', (event, payload) => {
 });
 
 ipcMain.on('show-alert', (event, payload) => {
-	dialog.showMessageBox(win, { type: "info", message: payload.msg });
+	const msg_type = payload.type ? payload.type : 'info';
+	dialog.showMessageBox(win, { type: msg_type, message: payload.msg });
 });
 
 // ---- ENGINE INTERCOM ----
@@ -119,12 +125,24 @@ function ChatAIEnded(p_msg) {
 	win.webContents.send('prompt-msg', { msg: p_msg });
 }
 
-function ShowBotMsg(message) {
-	win.webContents.send('bot-msg', { msg: message });
+function ShowBotMsg(message, anim_done=true) {
+	win.webContents.send('bot-msg', { msg: message, got_vid: anim_done });
 }
 
 function ShowGenTxt(gen_txt) {
 	win.webContents.send('gen-result', { txt: gen_txt });
+}
+
+function AppendLog(log_msg) {
+	win.webContents.send('append-log', { msg: log_msg });
+}
+
+function PlayAudio(audio_file) {
+	win.webContents.send('play-audio', { file: audio_file });
+}
+
+function GotAvatar(got_avatar) {
+	win.webContents.send('got-avatar', { got: got_avatar });
 }
 
 ipcMain.on('send-msg', (event, payload) => {
@@ -134,6 +152,15 @@ ipcMain.on('send-msg', (event, payload) => {
 ipcMain.on('gen-text', (event, payload) => {
 	core.configGen(payload);
 	core.sendMsg('gen_text');
+});
+
+ipcMain.on('read-text', (event, payload) => {
+	if (payload.txt != '') {
+		core.setReadText(payload.txt);
+		core.sendMsg('read_text');
+	} else {
+		dialog.showMessageBox(win, { type: "info", message: "There is no text to read!" });
+	}
 });
 
 // ---- CONFIG STUFF ----
@@ -162,7 +189,7 @@ ipcMain.on('config-app', (event, payload) => {
 			ChatAIEnded('Initializing AI Engine... please wait.');
 			win.webContents.send('load-config', {configs:core.getConfigs(), skip_inputs:true});
 			if (core.stopScript('RESTART')) {
-				core.startScript(ShowBotMsg, ShowGenTxt, ChatAIReady, ChatAIEnded, AddVoice);
+				core.startScript();
 			}
 		}
 	});
@@ -182,6 +209,11 @@ ipcMain.on('update-users', (event, payload) => {
 ipcMain.on('update-avatar', (event, payload) => {
 	core.setAvatar(payload);
 	core.sendMsg('update_avatar');
+});
+
+ipcMain.on('update-talk-mode', (event, payload) => {
+	core.setTalkMode(payload);
+	core.sendMsg('update_tmode');
 });
 
 ipcMain.on('update-prompt', (event, payload) => {
@@ -218,13 +250,14 @@ ipcMain.handle('restart-script', (event) => {
 		if (!value.response) {
 			ChatAIEnded('Initializing AI Engine... please wait.');
 			if (core.stopScript('RESTART')) {
-				core.startScript(ShowBotMsg, ShowGenTxt, ChatAIReady, ChatAIEnded, AddVoice);
+				core.startScript();
 			}
 		}
 	});
 });
 
 ipcMain.handle('start-script', (event) => {
+	core.setCallbacks(ShowBotMsg, ShowGenTxt, ChatAIReady, ChatAIEnded, AddVoice, PlayAudio, AppendLog, GotAvatar);
 	if (fs.existsSync('./config.json')) {
 		try {
 			core.setConfigs(JSON.parse(fs.readFileSync('./config.json')));
@@ -233,7 +266,7 @@ ipcMain.handle('start-script', (event) => {
 			ChatAIEnded('Error reading config file');
 			return;
 		}
-		core.startScript(ShowBotMsg, ShowGenTxt, ChatAIReady, ChatAIEnded, AddVoice);
+		core.startScript();
 	} else {
 		ChatAIEnded('No configuration file found. Visit the Settings tab to get started.');
 	}

@@ -12,7 +12,7 @@ import numpy as np
 import os
 import ffmpeg
 import cv2
-import face_alignment
+from thirdparty.face_alignment import FaceAlignment, LandmarksType
 from src.dataset.utils import icp
 
 
@@ -49,7 +49,7 @@ class Av2Flau_Convertor():
         self.input_format = self.video_dir[-4:]
 
         # landmark predictor = FANet
-        self.predictor = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, device='cuda', flip_input=True)
+        self.predictor = FaceAlignment(landmarks_type=LandmarksType._2D, device='cuda', flip_input=True)
 
         # landmark register
         self.t_shape_idx = (27, 28, 29, 30, 33, 36, 39, 42, 45)

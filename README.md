@@ -25,9 +25,9 @@ C:/venv/Scripts/activate.bat
 ```
 Now install the required Python packages into the virtual environment using this command:
 ```
-pip install -r C:/AU_UI/engine/requirements.txt
+pip install -r C:/AI_UI/engine/requirements.txt
 ```
-Replace `C:/AU_UI/` with the location where AI UI was extracted (should contain AI_UI.exe)
+Replace `C:/AI_UI/` with the location where AI UI was extracted (should contain AI_UI.exe)
 
 If you want GPU support run these two commands while the virtual environment is still activated:
 ```
@@ -35,7 +35,7 @@ pip uninstall torch torchvision torchaudio
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117
 ```
 
-Apparently the latest versions of Tensorflow for Windows don't have GPU support so may also need to run these commands:
+Apparently the latest versions of Tensorflow for Windows don't have GPU support so you may also need to run these commands:
 ```
 pip uninstall tensorflow
 pip install "tensorflow<2.11"
@@ -43,8 +43,10 @@ pip install "tensorflow<2.11"
 
 Next you'll need to download a text generation AI model from a site like [Hugging Face](https://huggingface.co/models). Models which have been fine-tuned on conversational text should work best for the chat bot.
 
-Now you can run AU_UI.exe but it wont do much until you visit the Settings tab and fill out the required information. The 'Python Binary' setting would be `C:/venv/Scripts/python.exe` for this example setup.
+If you want the chat bot to be capable of sending images you will also need to download a separate image generation AI model which uses the Stable Diffusion pipeline, many can be found on Hugging Face.
+
+Now you can run AI_UI.exe but it wont do much until you visit the Settings tab and fill out the required information. The 'Python Binary' setting would be `C:/venv/Scripts/python.exe` for this example setup.
 
 ## Model Files
 
-This repository doesn't contain the large model files from MakeItTalk, visit the [MakeItTalk repo](https://github.com/yzhou359/MakeItTalk) if you need links for them. They should also be included in AI UI releases.
+This repository doesn't contain the large model files from MakeItTalk. However they should be included with AI UI releases if you need them.
