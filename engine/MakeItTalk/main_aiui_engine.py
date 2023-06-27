@@ -28,7 +28,7 @@ from src.approaches.train_image_translation import Image_translation_block
 from src.autovc.AutoVC_mel_Convertor_retrain_version import AutoVC_mel_Convertor
 from src.approaches.train_audio2landmark import Audio2landmark_model
 from diffusers import StableDiffusionPipeline
-from transformers import pipeline, GPTNeoForCausalLM, GPT2Tokenizer, LlamaForCausalLM, LlamaTokenizer, AutoTokenizer, AutoModelForCausalLM, StoppingCriteria, StoppingCriteriaList
+from transformers import pipeline, GPTNeoForCausalLM, LlamaForCausalLM, LlamaTokenizer, AutoTokenizer, AutoModel, AutoModelForCausalLM, StoppingCriteria, StoppingCriteriaList
 
 ###### Config/Vars ######
 sys.stdout.reconfigure(encoding='utf-8')
@@ -40,6 +40,7 @@ sd_model_id = input().rstrip('/')
 model_type = int(input())
 model_args = input().split(',')
 device = input()
+start_meth = input()
 avatar_img = input()
 
 print("AI_CONFIG:")
@@ -74,38 +75,57 @@ responses = []
 stop_ids = []
 stop_criteria = []
 
-reserve_vram_mb = 300 if sd_model_id == '' else 3200
+sd_vram_mb = 0 if sd_model_id == '' else 2900
+reserve_vram_mb = 300 + sd_vram_mb
 reserved_vram = None
 
 model_adapter = ''
 sd_safety_check = True
 sd_use_float16 = True
-use_float16 = True
 load_in_8bit = False
+custom_model_code = False
+custom_token_code = False
 torch_dtype=torch.float16
 
 for arg in model_args:
 	carg = arg.strip(" ")
 	if carg.startswith("model_adapter="):
 		model_adapter = carg.replace("model_adapter=", "", 1)
-	elif carg.startswith("use_float16="):
-		use_float16 = carg.replace("use_float16=", "", 1)
-		if use_float16.lower() == "false" or use_float16 == "0":
+	elif carg.startswith("torch_dtype="):
+		dtype = carg.replace("torch_dtype=", "", 1).lower()
+		if dtype == "float32":
 			torch_dtype = torch.float32
+		elif dtype == "float16":
+			torch_dtype = torch.float16
+		elif dtype == "bfloat16":
+			torch_dtype = torch.bfloat16
 	elif carg.startswith("load_in_8bit="):
 		load_8bit = carg.replace("load_in_8bit=", "", 1)
 		if load_8bit.lower() == "true" or load_8bit == "1":
 			load_in_8bit = True
+	elif carg.startswith("custom_model_code="):
+		custom_code = carg.replace("custom_model_code=", "", 1)
+		if custom_code.lower() == "true" or custom_code == "1":
+			custom_model_code = True
+	elif carg.startswith("custom_token_code="):
+		custom_code = carg.replace("custom_token_code=", "", 1)
+		if custom_code.lower() == "true" or custom_code == "1":
+			custom_token_code = True
 	elif carg.startswith("sd_safety_check="):
 		sd_safety_check = carg.replace("sd_safety_check=", "", 1)
 	elif carg.startswith("sd_use_float16="):
 		sd_use_float16 = carg.replace("sd_use_float16=", "", 1)
 	elif carg.startswith("reserve_vram_mb="):
 		reserve_vram_mb = int(carg.replace("reserve_vram_mb=", "", 1))
+		if reserve_vram_mb > 300:
+			sd_vram_mb = reserve_vram_mb - 300
+		else:
+			sd_vram_mb = 0
 
 def ReserveVRAM():
 	global reserved_vram
-	if reserved_vram == None and device == "auto" and torch.cuda.is_available():
+	if reserve_vram_mb <= 0 or reserved_vram != None: return
+	if device == "auto" and torch.cuda.is_available():
 		reserved_vram = torch.cuda.FloatTensor(256,1024,reserve_vram_mb)
 			
 def CleanVRAM():
@@ -134,7 +154,7 @@ voices = synthesizer.getProperty('voices')
 voice_list = '';
 
 if len(voices) < 1:
-	sys.exit("Error: could not find any text-to-speech voices installed on this system")
+	sys.exit("ERROR: could not find any text-to-speech voices installed on this system")
 for voice in voices:
     voice_list += "VOICE_NAME:"+voice.name+"VOICE_ID:"+voice.id+"\n"
 
@@ -175,22 +195,40 @@ transformers.logging.set_verbosity_error()
 model = None
 tokenizer = None
 
+def LoadTokenizer():
+	global tokenizer
+
+	try:
+		if (model_type == 0):
+			tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=custom_token_code)
+		elif (model_type == 1):
+			tokenizer = AutoTokenizer.from_pretrained(model_id)
+		elif (model_type == 2):
+			tokenizer = LlamaTokenizer.from_pretrained(model_id)
+		elif (model_type == 3):
+			tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+		elif (model_type == 4):
+			tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+	except:
+		if start_meth == "text" or start_meth == "both":
+			sys.exit("ERROR: failed to load text tokenizer")
+
 def LoadModel():
-	global model, tokenizer
+	global model
 	#reserve VRAM for other models
 	ReserveVRAM()
+	
+	if tokenizer == None: LoadTokenizer()
 
 	if (model_type == 0):
-		tokenizer = AutoTokenizer.from_pretrained(model_id)
 		if device == "auto":
-			model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype, load_in_8bit=load_in_8bit, device_map="auto")
+			model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype, load_in_8bit=load_in_8bit, trust_remote_code=custom_model_code, device_map="auto")
 		elif device == "cuda":
-			model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype, load_in_8bit=load_in_8bit).to(device)
+			model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype, load_in_8bit=load_in_8bit, trust_remote_code=custom_model_code).to(device)
 		else:
-			model = AutoModelForCausalLM.from_pretrained(model_id, low_cpu_mem_usage=True).to(device)
+			model = AutoModelForCausalLM.from_pretrained(model_id, low_cpu_mem_usage=True, trust_remote_code=custom_model_code).to(device)
 
 	elif (model_type == 1):
-		tokenizer = GPT2Tokenizer.from_pretrained(model_id)
 		if device == "auto":
 			model = GPTNeoForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype, load_in_8bit=load_in_8bit, pad_token_id=tokenizer.eos_token_id, device_map="auto")
 		elif device == "cuda":
@@ -199,7 +237,6 @@ def LoadModel():
 			model = GPTNeoForCausalLM.from_pretrained(model_id, pad_token_id=tokenizer.eos_token_id, low_cpu_mem_usage=True).to(device)
 
 	elif (model_type == 2):
-		tokenizer = LlamaTokenizer.from_pretrained(model_id)
 		if device == "cuda" or device == "auto":
 			if device == "auto":
 				model = LlamaForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype, load_in_8bit=load_in_8bit, device_map="auto")
@@ -212,6 +249,22 @@ def LoadModel():
 			if model_adapter != '':
 				model = PeftModel.from_pretrained(model, model_adapter, device_map={"": device})
 
+	elif (model_type == 3):
+		if device == "auto":
+			model = AutoModel.from_pretrained(model_id, torch_dtype=torch_dtype, trust_remote_code=True, device_map="auto")
+		elif device == "cuda":
+			model = AutoModel.from_pretrained(model_id, torch_dtype=torch_dtype, trust_remote_code=True).to(device)
+		else:
+			model = AutoModel.from_pretrained(model_id, low_cpu_mem_usage=True, trust_remote_code=True).to(device)
+
+	elif (model_type == 4):
+		if device == "auto":
+			model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, trust_remote_code=True, device_map="auto")
+		elif device == "cuda":
+			model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, trust_remote_code=True).to(device)
+		else:
+			model = AutoModelForCausalLM.from_pretrained(model_id, low_cpu_mem_usage=True, trust_remote_code=True).to(device)
+
 	model.eval()
 
 	if torch.__version__ >= "2" and sys.platform != "win32":
@@ -219,33 +272,67 @@ def LoadModel():
 
 ###### STABLE DIFF STUFF ######
 
-def GenImage(image_prompt):
-	global model
+sd_model = None
 
-	if image_prompt == '': return -1
-		
-	if device == "cuda": model = model.to("cpu")
-	CleanVRAM()
+def LoadSDModel(exit_on_error=True):
+	global sd_model, reserve_vram_mb
+	orig_rvram = reserve_vram_mb
 
 	try:
+		if reserve_vram_mb > sd_vram_mb:
+			reserve_vram_mb -= sd_vram_mb
+
 		if sd_safety_check == True or sd_safety_check.lower() == "true" or sd_safety_check == "1":
 			if sd_use_float16 == True or sd_use_float16.lower() == "true" or sd_use_float16 == "1":
-				pipe = StableDiffusionPipeline.from_pretrained(sd_model_id, torch_dtype=torch.float16, revision="fp16")
+				sd_model = StableDiffusionPipeline.from_pretrained(sd_model_id, torch_dtype=torch.float16, revision="fp16")
 			else:
-				pipe = StableDiffusionPipeline.from_pretrained(sd_model_id)
+				sd_model = StableDiffusionPipeline.from_pretrained(sd_model_id)
 		elif sd_use_float16 == True or sd_use_float16.lower() == "true" or sd_use_float16 == "1":
-			pipe = StableDiffusionPipeline.from_pretrained(sd_model_id, torch_dtype=torch.float16, revision="fp16", safety_checker=None)
+			sd_model = StableDiffusionPipeline.from_pretrained(sd_model_id, torch_dtype=torch.float16, revision="fp16", safety_checker=None)
 		else:
-			pipe = StableDiffusionPipeline.from_pretrained(sd_model_id, safety_checker=None)
+			sd_model = StableDiffusionPipeline.from_pretrained(sd_model_id, safety_checker=None)
 		
-		pipe.enable_model_cpu_offload()
-		pipe.enable_attention_slicing("max")
+		sd_model.enable_model_cpu_offload()
+		sd_model.enable_attention_slicing("max")
+	except:
+		reserve_vram_mb = orig_rvram
+		sd_model = None
+		CleanVRAM()
+		ReserveVRAM()
+		if exit_on_error:
+			sys.exit("ERROR: failed to load stable diffusion model")
+		else:
+			print("ERROR: failed to load stable diffusion model")
+		return False
+	
+	return True
+
+def GenImage(image_prompt, neg_prompt="NONE", infer_steps=50, guidance=7.5, img_width="auto", img_height="auto"):
+	global sd_model
+
+	if image_prompt == '': return -1
+	
+	CleanVRAM()
+
+	if sd_model == None:
+		if not LoadSDModel(False): return -1
+		
+	try:
 		clean_prompt = image_prompt.strip(' ').replace("\n", ' ').replace("\r", '')
 
 		with torch.inference_mode():
-			output = pipe(clean_prompt)
+			if neg_prompt == "NONE":
+				if img_width == "auto" or img_height == "auto":
+					output = sd_model(prompt=clean_prompt, num_inference_steps=infer_steps, guidance_scale=guidance)
+				else:
+					output = sd_model(prompt=clean_prompt, num_inference_steps=infer_steps, guidance_scale=guidance, width=img_width, height=img_height)
+			else:
+				if img_width == "auto" or img_height == "auto":
+					output = sd_model(prompt=clean_prompt, negative_prompt=neg_prompt, num_inference_steps=infer_steps, guidance_scale=guidance)
+				else:
+					output = sd_model(prompt=clean_prompt, negative_prompt=neg_prompt, num_inference_steps=infer_steps, guidance_scale=guidance, width=img_width, height=img_height)
 
-		img_dir = work_dir+"/chat_images/"
+		img_dir = work_dir+"/ai_images/"
 		if os.path.exists(img_dir):
 			img_num = CountFiles(img_dir)
 		else:
@@ -257,10 +344,8 @@ def GenImage(image_prompt):
 		print("ERROR: failed to generate or save image")
 		return -1
 
-	pipe = None
 	CleanVRAM()
 	ReserveVRAM()
-	if device == "cuda": model = model.to("cuda")
 	
 	return img_num
 
@@ -286,7 +371,7 @@ parser.add_argument('--load_i2i_name', type=str, default='examples/ckpt/ckpt_116
 parser.add_argument('--amp_lip_x', type=float, default=AMP_LIP_SHAPE_X)
 parser.add_argument('--amp_lip_y', type=float, default=AMP_LIP_SHAPE_Y)
 parser.add_argument('--amp_pos', type=float, default=AMP_HEAD_POSE_MOTION)
-parser.add_argument('--reuse_train_emb_list', type=str, nargs='+', default=[]) #  ['iWeklsXc0H8']) #['45hn7-LXDX8']) #['E_kmpT-EfOg']) #'iWeklsXc0H8', '29k8RtSUjE0', '45hn7-LXDX8',
+parser.add_argument('--reuse_train_emb_list', type=str, nargs='+', default=[])
 parser.add_argument('--add_audio_in', default=False, action='store_true')
 parser.add_argument('--comb_fan_awing', default=False, action='store_true')
 parser.add_argument('--output_folder', type=str, default='examples')
@@ -359,7 +444,6 @@ def AnimFace():
 
 	if not got_avatar: return False
 
-	if device == "cuda": model = model.to("cpu")
 	CleanVRAM()
 	
 	''' STEP 2: normalize face as input to audio branch '''
@@ -477,7 +561,6 @@ def AnimFace():
 	a2l_model = None
 	CleanVRAM()
 	ReserveVRAM()
-	if device == "cuda": model = model.to("cuda")
 		
 	return anim_done
 
@@ -512,18 +595,24 @@ def GetUserNames():
 
 	stop_ids = tokenizer.encode("\n"+user_name_dc)
 
-def InitPrompt():
+def InitPrompt(have_prompt=False):
 	global messages, prompt, init_prompt
-	prompt = 'Chat log between '+user_name+' and '+bot_name+' on '+datetime.utcnow().strftime("%m/%d/%Y")+"\n"
-	init_prompt = prompt
+	if have_prompt:
+		prompt = init_prompt
+	else:
+		prompt = 'Chat log between '+user_name+' and '+bot_name+' on '+datetime.utcnow().strftime("%m/%d/%Y")+"\n"
+		init_prompt = prompt
 	messages = [init_prompt]
 	if prompt_p == 1:
 		messages = []
 	if prompt_p == 2:
 		prompt = ''
-		init_prompt = ''
+		init_prompt = 'No prompt'
 		messages = []
-	print("INIT_DONE: "+init_prompt, flush=True)
+	if have_prompt:
+		print("CLEAR_DONE:"+init_prompt, flush=True)
+	else:
+		print("INIT_DONE:"+init_prompt, flush=True)
 	time.sleep(0.1)
 	
 def PrunePrompt():
@@ -545,26 +634,38 @@ def PrunePrompt():
 		else:
 			prompt = init_prompt+"\n"+prompt
 
-def GenText(m, tn, it, rl):
+def GenText(it, rl):
+	global model, tokenizer
 	CleanVRAM()
+	if model == None: LoadModel()
 	stop_criteria = StoppingCriteriaList([StoppingCriteriaKeys(stop_ids)])
 	with torch.no_grad():
-		out_tokens = m.generate(do_sample=True, inputs=it, min_new_tokens=gen_min, max_new_tokens=gen_max, temperature=rl, 
+		out_tokens = model.generate(do_sample=True, inputs=it, min_new_tokens=gen_min, max_new_tokens=gen_max, temperature=rl, 
 			top_k=top_k, top_p=top_p, typical_p=typical_p, repetition_penalty=rep_penalty, stopping_criteria=stop_criteria)
 	CleanVRAM()
 	ReserveVRAM()
-	return StripEnd(tn.decode(out_tokens[0], skip_special_tokens=True), '<|endoftext|>')
+	return StripEnd(tokenizer.decode(out_tokens[0], skip_special_tokens=True), '<|endoftext|>')
 
-def GenNoStop(m, tn, it, nt, mt, rl, tk, tp, ty, rp):
+def GenNoStop(it, nt, mt, rl, tk, tp, ty, rp):
+	global model, tokenizer
 	CleanVRAM()
+	if model == None: LoadModel()
 	with torch.no_grad():
-		out_tokens = m.generate(do_sample=True, inputs=it, min_new_tokens=nt, max_new_tokens=mt,
+		out_tokens = model.generate(do_sample=True, inputs=it, min_new_tokens=nt, max_new_tokens=mt,
 			temperature=rl, top_k=tk, top_p=tp, typical_p=ty, repetition_penalty=rp)
 	CleanVRAM()
 	ReserveVRAM()
-	return StripEnd(tn.decode(out_tokens[0], skip_special_tokens=True), '<|endoftext|>')
+	return StripEnd(tokenizer.decode(out_tokens[0], skip_special_tokens=True), '<|endoftext|>')
 
-LoadModel()
+if start_meth == "text":
+	LoadModel()
+elif start_meth == "image":
+	LoadSDModel()
+elif start_meth == "both":
+	LoadModel()
+	LoadSDModel()
+
+LoadTokenizer()
 LoadAvatar()
 ApplyTalkMode()
 GetUserNames()
@@ -597,7 +698,8 @@ while (True):
 		PrunePrompt()
 		continue
 	elif msg == "clear_chat":
-		InitPrompt()
+		InitPrompt(True)
+		rando_lvl = rando_min
 		continue
 	elif msg == "config_voice":
 		print("VOICE_CONFIG:")
@@ -624,6 +726,7 @@ while (True):
 		rep_penalty = float(input())
 		rando_min = rando_lvl
 		if prompt_p != last_pp:
+			if init_prompt == 'No prompt': InitPrompt()
 			if last_pp == 0:
 				if len(messages) > 0 and messages[0] == init_prompt:
 					messages = messages[1::]
@@ -633,6 +736,18 @@ while (True):
 				else:
 					messages = [init_prompt]
 		PrunePrompt()
+		continue
+	elif msg == "gen_image":
+		print("IMAGE_PROMPT:")
+		img_prompt = input()
+		neg_prompt = input()
+		infer_steps = int(input())
+		guidance = float(input())
+		img_width = input()
+		img_height = input()
+		img_num = GenImage(img_prompt, neg_prompt, infer_steps, guidance, img_width, img_height)
+		print("IMG_OUTPUT:"+str(img_num), flush=True)
+		time.sleep(0.1)
 		continue
 	elif msg == "gen_text":
 		print("START_TEXT:")
@@ -648,7 +763,7 @@ while (True):
 			in_tokens = tokenizer(start_txt, return_tensors="pt").input_ids.to("cuda")
 		else:
 			in_tokens = tokenizer(start_txt, return_tensors="pt").input_ids
-		text = GenNoStop(model, tokenizer, in_tokens, gmin, gmax, temp, topk, topp, typp, repp)
+		text = GenNoStop(in_tokens, gmin, gmax, temp, topk, topp, typp, repp)
 		print("GEN_OUTPUT:"+text.replace("\n", "[AI_UI_BR]"), flush=True)
 		time.sleep(0.1)
 		continue
@@ -698,8 +813,9 @@ while (True):
 	else:
 		in_tokens = tokenizer(prompt, return_tensors="pt").input_ids
 
-	text = GenText(model, tokenizer, in_tokens, temp)
-	print("RAW OUTPUT: "+text, flush=True)
+	text = GenText(in_tokens, temp)
+	#print("RAW OUTPUT: "+text, flush=True)
+	#time.sleep(0.1)
 
 	text = StripEnd(text, "\n"+user_name_dc).replace("\r", '')
 	responses = text.replace(prompt[:-len(bot_name_dc)], '', 1).split("\n")
@@ -747,7 +863,7 @@ while (True):
 		if not got_res and try_again:
 			rando_lvl += rando_add
 			if rando_lvl <= 1.0:
-				text = GenText(model, tokenizer, in_tokens, rando_lvl)
+				text = GenText(in_tokens, rando_lvl)
 				text = StripEnd(text, "\n"+user_name_dc).replace("\r", '')
 				responses = text.replace(prompt[:-len(bot_name_dc)], '', 1).split("\n")
 				r = 0

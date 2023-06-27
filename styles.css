@@ -74,7 +74,7 @@ footer {
 	margin-top: 10px;
 }
 
-#chat_app, #txtgen_app {
+#chat_app, #txtgen_app, #imggen_app {
 	width: 100%;
 	min-width: 700px;
 	position: absolute;
@@ -82,7 +82,7 @@ footer {
 	bottom: 0px;
 }
 
-#chat_box, #txtgen_box {
+#chat_box, #txtgen_box, #imggen_box {
 	height: 100%;
 	min-width: 400px;
 	position: absolute;
@@ -92,7 +92,7 @@ footer {
 	box-sizing: border-box;
 }
 
-#gen_result {
+#gen_result, #img_result {
 	padding: 20px;
 	position: absolute;
 	top: 0px;
@@ -100,6 +100,11 @@ footer {
 	right: 0px;
 	bottom: 32px;
 	overflow-y: auto;
+}
+
+#img_result {
+	text-align: center;
+	overflow-y: hidden;
 }
 
 #chat_log {
@@ -145,12 +150,13 @@ footer {
 	border: none;
 }
 
-#copy_btn, #read_btn {
-	width: 180px;
+#copy_txt_btn, #read_txt_btn,
+#copy_img_btn, #open_dir_btn {
+	width: 170px;
 	margin: 20px 30px 0px 30px;
 }
 
-#thinking, #generating {
+#thinking, .generating {
 	width: 100px;
 	position: absolute;
 	right: 25px;
@@ -170,7 +176,7 @@ footer {
 	background-color: #222429;
 }
 
-#gen_side {
+#txtgen_side, #imggen_side {
 	width: 300px;
 	position: absolute;
 	top: 0px;
@@ -243,7 +249,7 @@ footer {
 	bottom: 50px;
 }
 
-#send_box, #gen_box {
+#send_box, .gen_input_box {
 	width: 100%;
 	height: 32px;
 	position: absolute;
@@ -254,15 +260,17 @@ footer {
 	position: absolute;
 	left: 0px;
 	right: 241px;
+	bottom: 0px;
 	border: 1px solid #a9bbde;
 	border-right: none;
 	box-sizing: border-box;
 }
 
-#gen_text_box {
+#gen_text_box, #img_text_box {
 	position: absolute;
 	left: 0px;
 	right: 101px;
+	bottom: 0px;
 	border: 1px solid #a9bbde;
 	border-right: none;
 	box-sizing: border-box;
@@ -272,18 +280,29 @@ footer {
 	width: 241px;
 	position: absolute;
 	right: 0px;
+	bottom: 0px;
 	border: 1px solid #a9bbde;
 	border-right: none;
 	box-sizing: border-box;
 }
 
-#gen_butt_box {
+#gen_butt_box, #img_butt_box {
 	width: 101px;
 	position: absolute;
 	right: 0px;
+	bottom: 0px;
 	border: 1px solid #a9bbde;
 	border-right: none;
 	box-sizing: border-box;
+}
+
+#img_butt_box {
+	border-left: none;
+}
+
+#gen_img {
+	max-width: 100%;
+	max-height: 100%;
 }
 
 #text_inp, #gen_text_inp {
@@ -294,6 +313,17 @@ footer {
 	background-color: #3a404a;
 	box-sizing: border-box;
 	border: none;
+	color: #bcc9e3;
+}
+
+#img_text_inp, #img_text_neg {
+	width: 50%;
+	height: 30px;
+	padding: 6px 10px;
+	background-color: #3a404a;
+	box-sizing: border-box;
+	border: none;
+	border-right: 1px solid #a9bbde;
 	color: #bcc9e3;
 }
 
@@ -350,7 +380,18 @@ footer {
 	width: 156px;
 }
 
-#gen_btn {
+#edit_btn {
+	border: none;
+	background-color: transparent;
+	padding: 0px;
+}
+
+
+#edit_btn:hover:enabled {
+	cursor: pointer;
+}
+
+#gen_btn, #img_btn {
 	width: 100px;
 	border: none;
 	display: inline-block;
@@ -440,11 +481,6 @@ footer {
 	display: inline-block;
 }
 
-.edit_btn:hover {
-	cursor: pointer;
-	content: url(./img/edit.png);
-}
-
 .menu_btn {
 	height: 30px;
 	line-height: 30px;
@@ -473,6 +509,10 @@ footer {
 
 .menu_sel:hover {
 	cursor: default;
+}
+
+.edit_img:hover {
+	content: url(./img/edit.png);
 }
 
 .txt_area {
@@ -624,4 +664,9 @@ footer {
 	margin: 0px 0px 10px 0px;
 	overflow-x: auto;
 	white-space: pre-wrap;
+}
+
+.settings_col {
+	width: 425px;
+	display: inline-block;
 }

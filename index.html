@@ -9,11 +9,11 @@
 	<script>
 	const { ipcRenderer } = require('electron');
 	
-	const pedit_img_html = '<img id="prompt_edit" class="edit_btn" src="./img/edit_w.png" width="15" onclick="ToggleEditPrompt()" />';
+	const pedit_img_html = '<button id="edit_btn" onclick="ToggleEditPrompt()"><img class="edit_img" src="./img/edit_w.png" width="15" /></button>';
 	const default_ip = "Chat log between HUMAN_NAME and BOT_NAME on DATE";
 	const pygmalion_ip = "BOT_NAME's Persona: A helpful AI assistant who can use the [AI_IMG] tag to generate images from a description.\n<START>\nHUMAN_NAME: show me an image of a cyberpunk cityscape\nBOT_NAME: [AI_IMG]cyberpunk cityscape[/AI_IMG]";
 	const bbcode_ip = "Use the [CODE] tag to post a code snippet. Example: [CODE]int abc = 123;[/CODE]\nUse the [AI_IMG] tag to generate an image from a description using AI. Example: [AI_IMG]cute kitten[/AI_IMG]";
-	var ip_vals = { chat:default_ip, pygmalion:pygmalion_ip, bbcode:bbcode_ip };
+	var ip_vals = { chat:'', pygmalion:'', bbcode:'' };
 	
 	var avatar_vid = null;
 	var speech_audio = null;
@@ -27,6 +27,7 @@
 	var gen_exp = false;
 	var adv_show = false;
 	var voice_arr = [];
+	var think_targ = '';
 	var prompt = '';
 
 	var human_name = 'Human';
@@ -48,7 +49,8 @@
 	var rep_penalty = 1.0;
 	
 	var model_type = 0;
-	var comp_dev = 0;
+	var comp_dev = 'auto';
+	var start_meth = 'text';
 	var script_dir = '';
 	var model_args = ''
 	var model_dir = '';
@@ -66,15 +68,29 @@
 	}
 	
 	function PlayVideo() {
-		$('#avatar_source').prop('src', avatar_mp4+'?rnd='+RandInt());
+		if ($('#other_vid').is(":hidden")) {
+			$('#other_source').prop('src', avatar_mp4+'?rnd='+RandInt());
+			avatar_vid = document.getElementById('other_vid');
+		} else {
+			$('#avatar_source').prop('src', avatar_mp4+'?rnd='+RandInt());
+			avatar_vid = document.getElementById('avatar_vid');
+		}
+		avatar_vid.oncanplaythrough = function() {
+			if ($('#other_vid').is(":hidden")) {
+				$('#avatar_vid').hide();
+			} else {
+				$('#other_vid').hide();
+			}
+			$(avatar_vid).show();
+			avatar_vid.play();
+		};
 		avatar_vid.load();
-		avatar_vid.play(); 
 	}
 
 	function PlayAudio(audio_file) {
 		if (speech_audio !== null && !speech_audio.paused) speech_audio.pause();
 		speech_audio = new Audio('file://'+audio_file+'?rnd='+RandInt());
-		speech_audio.onended = function() { $('#read_btn').html('TEXT TO SPEECH'); };
+		speech_audio.onended = function() { $('#read_txt_btn').html('TEXT TO SPEECH'); };
 		speech_audio.play();
 	}
 	
@@ -101,7 +117,7 @@
 	function ConvertAIBB(txt) {
 		return txt.replaceAll("[AI_UI_BR]", "<br>").replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_LF]", "\n").
 			replaceAll("[CODE START]", '</p><pre class="code_box">').replaceAll("[CODE END]", '</pre><p class="msg_p">').
-			replaceAll("[AI_IMG NUM_", '</p><img class="chat_img" src="file://'+script_dir+'/chat_images/image_').
+			replaceAll("[AI_IMG NUM_", '</p><img class="chat_img" src="file://'+script_dir+'/ai_images/image_').
 			replaceAll("_CHAT_IMG]", '.png" title="').replaceAll("[AI_IMG END]", '" onclick="ShowInFolder(this)"><p class="msg_p">');
 	}
 	
@@ -136,6 +152,7 @@
 	function HidePages() {
 		$('#chat_app').hide();
 		$('#txtgen_app').hide();
+		$('#imggen_app').hide();
 		$('#console_tab').hide();
 		$('#config_tab').hide();
 		$('#about_tab').hide();
@@ -157,6 +174,11 @@
 		$('#txtgen_app').show();
 	}
 	
+	function ImagePage(btn) {
+		SelectPage(btn);
+		$('#imggen_app').show();
+	}
+	
 	function ConfigPage(btn) {
 		SelectPage(btn);
 		$('#config_tab').show();
@@ -175,7 +197,7 @@
 	// ---- CHAT ----
 	
 	function ThinkAnim() {
-		let targ = (thinking) ? '#thinking' : '#generating';
+		const targ = (thinking) ? '#thinking' : think_targ;
 		switch (dot_count) {
 		case 0: 
 			$(targ).html('');
@@ -239,6 +261,8 @@
 		DisExtraButtons(new_state);
 		$('#apply_btn').prop('disabled', bool_val);
 		$('#gen_btn').prop('disabled', bool_val);
+		$('#img_btn').prop('disabled', bool_val);
+		$('#edit_btn').prop('disabled', bool_val);
 		$('.config_btn').prop('disabled', bool_val);
 	}
 	
@@ -251,7 +275,6 @@
 		StopThinking();
 		if (payload.got_vid && talk_mode == 0) {
 			$('#avatar_img').hide();
-			$('#avatar_vid').show();
 			PlayVideo();
 		}
 	});
@@ -274,6 +297,7 @@
 		if (message == '') return;
 		html_msg = '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+html_msg+'</p></div></div>';
 		$('#chat_log').append(html_msg.replaceAll('<p class="msg_p"></p>', ''));
+		$('#edit_dialog').hide();
 		ipcRenderer.send('send-msg', { msg: message });
 		DisableButtons(true);
 		StartThinking();
@@ -281,6 +305,8 @@
 	
 	function RedoLast() {
 		$('.bmsg_box').last().remove();
+		if ($('#chat_log').children().last().hasClass('bmsg_box'))
+			$('#chat_log').append('<div class="msg_pad"></div>');
 		DisableButtons(true);
 		ipcRenderer.send('send-msg', { msg: 'redo_last' });
 		StartThinking();
@@ -315,17 +341,18 @@
 	
 	// ---- TEXT GEN ----
 
-	function StartGenerating() {
+	function StartGenerating(targ) {
 		generating = true;
-		$('#generating').html('');
-		$('#generating').show();
+		think_targ = targ;
+		$(think_targ).html('');
+		$(think_targ).show();
 		dot_count = 1;
 		loop_timer = setInterval(ThinkAnim, 1000);
 	}
 	
-	function StopGenerating() {
+	function StopGenerating(targ='.generating') {
 		generating = false;
-		$('#generating').hide();
+		$(targ).hide();
 		clearInterval(loop_timer);
 	}
 	
@@ -348,19 +375,19 @@
 	}
 	
 	function ReadGenTxt() {
-		if ($('#read_btn').html() == 'TEXT TO SPEECH') {
+		if ($('#read_txt_btn').html() == 'TEXT TO SPEECH') {
 			if (thinking || generating) {
 				ipcRenderer.send('show-alert', { msg: 'The engine is busy with another task.' });
 				return;
 			}
 			const gen_txt = $('#gen_result').html().replaceAll("<br>", "[AI_UI_BR]");
-			if (gen_txt != '') $('#read_btn').html('STOP READING');
+			if (gen_txt != '') $('#read_txt_btn').html('STOP READING');
 			ipcRenderer.send('read-text', { txt: gen_txt });
-		} else if ($('#read_btn').html() == 'STOP READING') {
-			$('#read_btn').html('CONTINUE READING');
+		} else if ($('#read_txt_btn').html() == 'STOP READING') {
+			$('#read_txt_btn').html('CONTINUE READING');
 			ToggleAudio();
 		} else {
-			$('#read_btn').html('STOP READING');
+			$('#read_txt_btn').html('STOP READING');
 			ToggleAudio();
 		}
 	}
@@ -388,34 +415,88 @@
 			txt: start_txt, max: max_genl, min: min_genl, temp: gen_temp,
 			top_k: gen_topk, top_p: gen_topp, typ_p: gen_typp, rep_p: gen_repp
 		});
-		StartGenerating();
+		StartGenerating('#txtgen_box .generating');
 	}
 	
 	ipcRenderer.on('gen-result', (event, payload) => {
 		const txt_html = EncodeHTML(payload.txt).replaceAll("[AI_UI_BR]", "<br>");
 		DisableButtons(false, true);
 		$('#gen_result').html(txt_html);
-		$('#read_btn').html('TEXT TO SPEECH');
-		StopGenerating();
+		$('#read_txt_btn').html('TEXT TO SPEECH');
+		StopGenerating('#txtgen_box .generating');
+	});
+	
+	// ---- IMAGE GEN ----
+	
+	function CopyGenImg() {
+		let gen_img = document.getElementById('gen_img');
+		if (gen_img === null) {
+			ipcRenderer.send('show-alert', { msg: "There is no image to copy!" });
+		} else {
+			gen_img = $(gen_img).prop('src').
+				replace('file:///', '').replace('file://', '');
+			ipcRenderer.send('copy-image', { img: gen_img });
+		}
+	}
+	
+	function OpenImgDir() {
+		const gen_img = document.getElementById('gen_img');
+		ShowInFolder(gen_img);
+	}
+	
+	function GenImage() {
+		if (thinking || generating) return;
+		if ($('#img_btn').prop('disabled')) return;
+		let prompt_txt = $('#img_text_inp').val();
+		let prompt_neg = $('#img_text_neg').val();
+		if (prompt_txt == '') return;
+		if (prompt_neg == '') prompt_neg = 'NONE';
+		DisableButtons(true, true);
+		$('#img_result').html('Generating image ...');
+		const infer_steps = $('#infer_steps').val();
+		const guide_scale = $('#guidance').val();
+		let img_width = 'auto';
+		let img_height = 'auto';
+		if ($('#is_select').find(':selected').val() == 'custom') {
+			img_width = $('#img_width').val();
+			img_height = $('#img_height').val();
+		}
+		ipcRenderer.send('gen-image', {
+			img_prompt: prompt_txt, neg_prompt: prompt_neg, steps: infer_steps, 
+			guidance: guide_scale, width: img_width, height: img_height
+		});
+		StartGenerating('#imggen_box .generating');
+	}
+	
+	ipcRenderer.on('img-result', (event, payload) => {
+		const img_html = "<img id='gen_img' src='file://"+script_dir+"/ai_images/image_"+payload.img+".png'>";
+		DisableButtons(false, true);
+		$('#img_result').html(img_html);
+		StopGenerating('#imggen_box .generating');
 	});
 
 	// ---- APP ----
 
 	ipcRenderer.on('init-ui', (event, payload) => {
-		if (payload.state === true) {
+		if (payload.state !== false) {
 			const d = new Date();
 			const curr_date = (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
 			const pyg_ip = pygmalion_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
-			prompt = default_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
-			ip_vals = { chat:prompt, pygmalion:pyg_ip, bbcode:bbcode_ip };
+			if (payload.state == 'AI_UI_DEFAULT') {
+				prompt = default_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
+				ip_vals = { chat:prompt, pygmalion:pyg_ip, bbcode:bbcode_ip };
+			} else {
+				prompt = payload.state;
+			}
 			$('#prompt_txta').val(prompt);
 			$('#ip_select').val('default');
 			$('#chat_log').html('<div class="prompt"><p id="init_prompt" class="prompt_txt">'+
 				EncodeHTML(prompt)+' '+pedit_img_html+'</p></div>');
 			$('#gen_result').html('');
+			$('#img_result').html('');
 		} else {
 			$('#send_btn').prop('disabled', true);
-			$('#read_btn').prop('disabled', true);
+			$('#read_txt_btn').prop('disabled', true);
 			DisableButtons(true);
 			StopThinking();
 			StopGenerating();
@@ -424,7 +505,7 @@
 	
 	ipcRenderer.on('ai-ready', (event, payload) => {
 		$('#send_btn').prop('disabled', false);
-		$('#read_btn').prop('disabled', false);
+		$('#read_txt_btn').prop('disabled', false);
 		DisableButtons(false, true);
 		StopThinking();
 		StopGenerating();
@@ -456,6 +537,7 @@
 	ipcRenderer.on('prompt-msg', (event, payload) => {
 		$('#init_prompt').html(payload.msg);
 		$('#gen_result').html(payload.msg);
+		$('#img_result').html(payload.msg);
 	});
 	
 	ipcRenderer.on('load-config', (event, payload) => {
@@ -480,6 +562,7 @@
 		model_args = app_config.model_args;
 		model_type = app_config.model_type;
 		comp_dev = app_config.comp_dev;
+		start_meth = app_config.start_meth;
 
 		max_mm = ai_config.msg_mem;
 		max_rl = ai_config.max_res;
@@ -508,6 +591,7 @@
 		$('#model_args').val(model_args);
 		$('#mtype_select').val(model_type);
 		$('#device_select').val(comp_dev);
+		$('#startup_select').val(start_meth);
 
 		$('#max_msg_mem').val(max_mm);
 		$('#max_res_len').val(max_rl);
@@ -526,9 +610,17 @@
 		$('#gen_top_p').val(gen_config.top_p);
 		$('#gen_typ_p').val(gen_config.typical_p);
 		$('#gen_rep_p').val(gen_config.rep_penalty);
+		
+		$('#infer_steps').val(gen_config.inference_steps);
+		$('#guidance').val(gen_config.guidance_scale);
+		
+		if (gen_config.image_width != 'auto' && gen_config.image_height != 'auto') {
+			$('#img_width').val(gen_config.image_width);
+			$('#img_height').val(gen_config.image_height);
+			$('#is_input_box').show();
+		}
 
 		avatar_mp4 = 'file://'+script_dir+'/MakeItTalk/examples/face_pred_fls_speech_audio_embed.mp4';
-		$('#avatar_source').prop('src', avatar_mp4);
 		$('#tmode_img').prop('src', './img/talk_'+talk_mode+'.png');
 	});
 	
@@ -540,8 +632,9 @@
 		let margs = $('#model_args').val().replaceAll('\\', '/');
 		let mtype = $('#mtype_select').val();
 		let cdev = $('#device_select').val();
-		if (script_dir != sdir || python_bin != pbin || model_dir != mdir || sd_model != sddir || model_args != margs || model_type != mtype || comp_dev != cdev) {
-			ipcRenderer.send('config-app', { script_dir: sdir, python_bin: pbin, model_dir: mdir, sd_model: sddir, model_args: margs, model_type: mtype, comp_dev: cdev });
+		let smeth = $('#startup_select').val();
+		if (script_dir != sdir || python_bin != pbin || model_dir != mdir || sd_model != sddir || model_args != margs || model_type != mtype || comp_dev != cdev || start_meth != smeth) {
+			ipcRenderer.send('config-app', { script_dir: sdir, python_bin: pbin, model_dir: mdir, sd_model: sddir, model_args: margs, model_type: mtype, comp_dev: cdev, start_meth: smeth });
 		}
 	}
 	
@@ -655,8 +748,11 @@
 	}
 	
 	function ShowInFolder(elem) {
-		const file_path = $(elem).prop('src').
+		let file_path = script_dir+'/ai_images/';
+		if (elem !== null) {
+			file_path = $(elem).prop('src').
 			replace('file:///', '').replace('file://', '');
+		}
 		ipcRenderer.send('show-in-dir', file_path);
 	}
 	
@@ -676,8 +772,6 @@
 		SetAppVersion();
 		StartScript();
 
-		avatar_vid = document.getElementById('avatar_vid');
-
 		$("#text_inp").on('keyup', function (e) {
 			if (e.key === 'Enter' || e.keyCode === 13) {
 				SendMsg();
@@ -687,6 +781,18 @@
 		$("#gen_text_inp").on('keyup', function (e) {
 			if (e.key === 'Enter' || e.keyCode === 13) {
 				GenText();
+			}
+		});
+		
+		$("#img_text_inp").on('keyup', function (e) {
+			if (e.key === 'Enter' || e.keyCode === 13) {
+				GenImage();
+			}
+		});
+		
+		$("#img_text_neg").on('keyup', function (e) {
+			if (e.key === 'Enter' || e.keyCode === 13) {
+				GenImage();
 			}
 		});
 
@@ -721,6 +827,18 @@
 				break;
 			}
 		});
+		
+		$('#is_select').on('change', function() {
+			let is_sel = $(this).find(':selected').val();
+			switch (is_sel) {
+			case 'auto':
+				$('#is_input_box').hide();
+				break;
+			case 'custom':
+				$('#is_input_box').show();
+				break;
+			}
+		});
 	});
 	</script>
 </head>
@@ -730,7 +848,7 @@
 		<center id="loading_box" class="hidden"><div id="loading_msg">Processing avatar image... please wait.</div></center>
 
 		<div id="main_menu">
-			<button class="menu_btn menu_sel" onclick="ChatPage(this)">CHAT BOT</button><button class="menu_btn" onclick="TextPage(this)">TEXT GEN</button><button class="menu_btn" onclick="ConsolePage(this)">CONSOLE</button><button class="menu_btn" onclick="ConfigPage(this)">SETTINGS</button><button class="menu_btn" onclick="AboutPage(this)">ABOUT</button>
+			<button class="menu_btn menu_sel" onclick="ChatPage(this)">CHAT BOT</button><button class="menu_btn" onclick="TextPage(this)">TEXT GEN</button><button class="menu_btn" onclick="ImagePage(this)">IMAGE GEN</button><button class="menu_btn" onclick="ConsolePage(this)">CONSOLE</button><button class="menu_btn" onclick="ConfigPage(this)">SETTINGS</button><button class="menu_btn" onclick="AboutPage(this)">ABOUT</button>
 			<span id="menu_txt">AI UI v<span id="app-version"></span></b>
 		</div>
 		
@@ -775,6 +893,9 @@
 						<img id="avatar_img" width="256" height="256" src="" />
 						<video id="avatar_vid" class="hidden" width="256" height="256">
 							<source id="avatar_source" src="" type="video/mp4">
+						</video>
+						<video id="other_vid" class="hidden" width="256" height="256">
+							<source id="other_source" src="" type="video/mp4">
 						</video>
 						<button id="tmode_btn" class="config_btn" onclick="ChangeTalkMode()" disabled><img id="tmode_img" width="42" height="42" src="./img/talk_0.png" /></button>
 						<button id="avatar_btn" class="config_btn" onclick="ChangeAvatar()" disabled><img width="42" height="42" src="./img/folder_b.png" /></button>
@@ -826,11 +947,11 @@
 			<div id="txtgen_app" class="hidden">
 				<div id="txtgen_box">
 					<div id="gen_result"></div>
-					<div id="generating"></div>
-					<div id="gen_exp_box"><textarea id="gen_area_inp" class="txt_area hidden" name="msg_txta"></textarea></div>
-					<div id="gen_box">
+					<div class="generating"></div>
+					<div id="gen_exp_box"><textarea id="gen_area_inp" class="txt_area hidden"></textarea></div>
+					<div class="gen_input_box">
 						<div id="gen_text_box">
-							<input type="text" id="gen_text_inp" name="msg_txt" placeholder="Opening text">
+							<input type="text" id="gen_text_inp" placeholder="Opening text">
 						</div>
 						<button id="gen_exp_btn" onclick="ToggleGenBox()"><img src="./img/expand.png" width="20" /></button>
 						<div id="gen_butt_box">
@@ -839,7 +960,7 @@
 					</div>
 				</div>
 				
-				<div id="gen_side">
+				<div id="txtgen_side">
 					<center>
 						<h4 class="cfg_title">GENERATION SETTINGS</h4>
 						<span class="cfg_lbl">Max Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
@@ -858,8 +979,46 @@
 						<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
 						<input type="number" id="gen_rep_p" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
 						
-						<button id="copy_btn" class="btn cfg_btn" onclick="CopyGenTxt()">COPY GENERATED TEXT</button>
-						<button id="read_btn" class="btn cfg_btn" onclick="ReadGenTxt()" disabled>TEXT TO SPEECH</button>
+						<button id="copy_txt_btn" class="btn cfg_btn" onclick="CopyGenTxt()">COPY TO CLIPBOARD</button>
+						<button id="read_txt_btn" class="btn cfg_btn" onclick="ReadGenTxt()" disabled>TEXT TO SPEECH</button>
+					</center>
+				</div>
+			</div>
+
+			<div id="imggen_app" class="hidden">
+				<div id="imggen_box">
+					<div id="img_result"></div>
+					<div class="generating"></div>
+					<div class="gen_input_box">
+						<div id="img_text_box">
+							<input type="text" id="img_text_inp" placeholder="Prompt text"><input type="text" id="img_text_neg" placeholder="Negative prompt (optional)">
+						</div>
+						<div id="img_butt_box">
+							<button id="img_btn" class="btn" onclick="GenImage()" disabled>GENERATE</button>
+						</div>
+					</div>
+				</div>
+				
+				<div id="imggen_side">
+					<center>
+						<h4 class="cfg_title">GENERATION SETTINGS</h4>
+						<span class="cfg_lbl">Inference Steps <img class="help_icon" width="16" height="16" title="The number of denoising steps. More steps usually lead to higher quality images at the expense of slower image generation." /></span>
+						<input type="number" id="infer_steps" class="cfg_num" min="1" max="100" value="50">
+						<span class="cfg_lbl">Guidance Scale <img class="help_icon" width="16" height="16" title="A higher guidance scale encourages the AI to adhere to the prompt but can lead to lower image quality. Enabled by setting higher than 1." /></span>
+						<input type="number" id="guidance" class="cfg_num" min="0.0" max="10.0" step="0.1" value="7.5">
+						<span class="cfg_lbl">Image Size</span>
+						<select id="is_select" class="cfg_drp">
+							<option value="auto" selected>Auto</option>
+							<option value="custom">Custom</option>
+						</select>
+						<div id="is_input_box" class="hidden">
+							<span class="cfg_lbl">Image Width</span>
+							<input type="number" id="img_width" class="cfg_num" min="2" max="10000" value="512">
+							<span class="cfg_lbl">Image Height</span>
+							<input type="number" id="img_height" class="cfg_num" min="2" max="10000" value="512">
+						</div>
+						<button id="copy_img_btn" class="btn cfg_btn" onclick="CopyGenImg()">COPY TO CLIPBOARD</button>
+						<button id="open_dir_btn" class="btn cfg_btn" onclick="OpenImgDir()">OPEN IMAGE FOLDER</button>
 					</center>
 				</div>
 			</div>
@@ -873,29 +1032,44 @@
 			<div id="config_tab" class="hidden">
 				<center id="settings">
 					<h2>App Settings</h2><hr>
-					<span class="cfg_lbl">Script Folder <img class="help_icon" width="16" height="16" title="The directory containing the python scripts for the AI engine. Should contain a folder called MakeItTalk." /></span>
-					<div class="browse_btn"></div> <input type="text" id="script_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('script_dir')">BROWSE</button>
-					<span class="cfg_lbl">Python Binary <img class="help_icon" width="16" height="16" title="The location of your python binary (on Windows it's a file called python.exe)" /></span>
-					<div class="browse_btn"></div> <input type="text" id="python_bin" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFile('python_bin')">BROWSE</button>
-					<span class="cfg_lbl">StableDiff Folder <img class="help_icon" width="16" height="16" title="The directory containing the Stable Diffusion model (optional, allows chat AI to generate images)" /></span>
-					<div class="browse_btn"></div> <input type="text" id="sd_model" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('sd_model')">BROWSE</button>
-					<span class="cfg_lbl">Model Folder <img class="help_icon" width="16" height="16" title="The directory containing the AI model (usually has a pytorch_model.bin file in it)" /></span>
-					<div class="browse_btn"></div> <input type="text" id="model_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('model_dir')">BROWSE</button>
-					<span class="cfg_lbl">Model Type <img class="help_icon" width="16" height="16" title="The type of AI model in the model folder (should be a text generation model)." /></span>
-					<select id="mtype_select" class="cfg_drp">
-						<option value="0" selected>Auto-detect</option>
-						<option value="1">GPT-Neo</option>
-						<option value="2">Llama/Alpaca</option>
-					</select>
-					<span class="cfg_lbl">Model Setup <img class="help_icon" width="16" height="16" title="Optional setup arguments. Example: model_adapter=C:/model/adapter, use_float16=false, sd_use_float16=true, sd_safety_check=false, reserve_vram_mb=3200" /></span>
-					<input type="text" id="model_args" class="cfg_txt" value="" placeholder="Setup arguments (comma separated)">
-					<span class="cfg_lbl">Compute Device <img class="help_icon" width="16" height="16" title="If your GPU doesn't support CUDA or you don't have enough VRAM then select the CPU or Auto option. Auto will try to use all available compute devices." /></span>
-					<select id="device_select" class="cfg_drp">
-						<option value="auto" selected>Auto</option>
-						<option value="cpu">CPU</option>
-						<option value="cuda">GPU</option>
-					</select>
-					<br><br>
+					<div id="settings_row">
+						<div class="settings_col">
+							<span class="cfg_lbl">Engine Folder <img class="help_icon" width="16" height="16" title="The directory containing the python scripts for the AI engine. Should contain a folder called MakeItTalk." /></span>
+							<div class="browse_btn"></div> <input type="text" id="script_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('script_dir')">BROWSE</button>
+							<span class="cfg_lbl">Python Binary <img class="help_icon" width="16" height="16" title="The location of your python binary (on Windows it's a file called python.exe)" /></span>
+							<div class="browse_btn"></div> <input type="text" id="python_bin" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFile('python_bin')">BROWSE</button>
+							<span class="cfg_lbl">SD Model ID/Folder <img class="help_icon" width="16" height="16" title="The model ID (e.g. dreamlike-art/dreamlike-photoreal-2.0) or directory containing the Stable Diffusion model (optional, allows image generation)" /></span>
+							<div class="browse_btn"></div> <input type="text" id="sd_model" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('sd_model')">BROWSE</button>
+							<span class="cfg_lbl">Model ID/Folder <img class="help_icon" width="16" height="16" title="The model ID (e.g. PygmalionAI/pygmalion-6b) or the directory containing the text generation model (usually has a pytorch_model.bin file in it)" /></span>
+							<div class="browse_btn"></div> <input type="text" id="model_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('model_dir')">BROWSE</button>
+						</div>
+						<div class="settings_col">
+							<span class="cfg_lbl">Model Setup <img class="help_icon" width="16" height="16" title="Optional setup arguments. Example: model_adapter=C:/model/adapter, torch_dtype=float32, custom_model_code=true, sd_safety_check=false, reserve_vram_mb=3200" /></span>
+							<input type="text" id="model_args" class="cfg_txt" value="" placeholder="Setup arguments (comma separated)">
+							<span class="cfg_lbl">Model Type <img class="help_icon" width="16" height="16" title="The type of AI model in the model folder (should be a text generation model in the HuggingFace Transformers format)." /></span>
+							<select id="mtype_select" class="cfg_drp">
+								<option value="0" selected>Auto-detect</option>
+								<option value="1">GPT-Neo</option>
+								<option value="2">Llama/Alpaca</option>
+								<option value="3">ChatGLM</option>
+								<option value="4">Falcon</option>
+							</select>
+							<span class="cfg_lbl">Compute Device <img class="help_icon" width="16" height="16" title="If your GPU doesn't support CUDA or you don't have enough VRAM then select the CPU or Auto option. Auto will try to use all available compute devices." /></span>
+							<select id="device_select" class="cfg_drp">
+								<option value="auto" selected>Auto</option>
+								<option value="cpu">CPU</option>
+								<option value="cuda">GPU</option>
+							</select>
+							<span class="cfg_lbl">Startup Method <img class="help_icon" width="16" height="16" title="Choose which models should be loaded when the engine starts. Models not loaded at startup will be loaded automatically when required." /></span>
+							<select id="startup_select" class="cfg_drp">
+								<option value="text" selected>Load text model</option>
+								<option value="image">Load image model</option>
+								<option value="both">Load both models</option>
+								<option value="none">No model loading</option>
+							</select>
+						</div>
+					</div>
+					<br><hr><br>
 					<button id="settings_btn" class="btn cfg_btn" onclick="ApplySettings()">APPLY</button>
 					<button id="restart_btn" class="btn cfg_btn" onclick="RestartScript()">RESTART AI ENGINE</button>
 				</center>

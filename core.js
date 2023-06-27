@@ -6,8 +6,8 @@ var ENGINE_STATE = 'STOPPED';
 var CHAT_STATE = 'INIT';
 var CHAT_CONFIG = { human_name: 'Human', bot_name: 'Bot', bot_voice: 0, speech_vol: 1.0, speech_rate: 200, pitch_shift: 0, talk_mode: 0 };
 var AI_CONFIG = { msg_mem: 5, max_res: 50, min_res: 1, base_temp: 0.8, prompt_p: 0, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0 };
-var APP_CONFIG = { avatar_img: '', script_dir: '', python_bin: '', model_dir: '', sd_model: '', model_args: '', model_type: 0, comp_dev: 'cpu' };
-var GEN_CONFIG = { start_text: '', max_len: 50, min_len: 1, temp: 0.8, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0 };
+var APP_CONFIG = { avatar_img: '', script_dir: '', python_bin: '', model_dir: '', sd_model: '', model_args: '', model_type: 0, comp_dev: 'auto', start_meth: 'text' };
+var GEN_CONFIG = { prompt_text: '', prompt_neg: '', image_width: 'auto', image_height: 'auto', inference_steps: 50, guidance_scale: 7.5, max_len: 50, min_len: 1, temp: 0.8, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0 };
 var MAIN_SCRIPT = 'main_aiui_engine.py';
 var DONE_VOICES = false;
 var CB_FUNCS = null;
@@ -87,25 +87,36 @@ function ConfigApp(app_config) {
 	APP_CONFIG.model_args = app_config.model_args;
 	APP_CONFIG.sd_model = app_config.sd_model;
 	APP_CONFIG.comp_dev = app_config.comp_dev;
+	APP_CONFIG.start_meth = app_config.start_meth;
 }
 
 function ConfigGen(gen_config) {
-	GEN_CONFIG.start_text = gen_config.txt;
-	GEN_CONFIG.max_len = gen_config.max;
-	GEN_CONFIG.min_len = gen_config.min;
-	GEN_CONFIG.temp = gen_config.temp;
-	GEN_CONFIG.top_k = gen_config.top_k;
-	GEN_CONFIG.top_p = gen_config.top_p;
-	GEN_CONFIG.typical_p = gen_config.typ_p;
-	GEN_CONFIG.rep_penalty = gen_config.rep_p;
+	if (gen_config.hasOwnProperty('img_prompt')) {
+		GEN_CONFIG.prompt_text = gen_config.img_prompt;
+		GEN_CONFIG.prompt_neg = gen_config.neg_prompt;
+		GEN_CONFIG.guidance_scale = gen_config.guidance;
+		GEN_CONFIG.inference_steps = gen_config.steps;
+		GEN_CONFIG.image_width = gen_config.width;
+		GEN_CONFIG.image_height = gen_config.height;
+	} else {
+		GEN_CONFIG.prompt_text = gen_config.txt;
+		GEN_CONFIG.max_len = gen_config.max;
+		GEN_CONFIG.min_len = gen_config.min;
+		GEN_CONFIG.temp = gen_config.temp;
+		GEN_CONFIG.top_k = gen_config.top_k;
+		GEN_CONFIG.top_p = gen_config.top_p;
+		GEN_CONFIG.typical_p = gen_config.typ_p;
+		GEN_CONFIG.rep_penalty = gen_config.rep_p;
+	}
 }
 
-function SetCallbacks(bot_out_func, gen_out_func, ai_ready_func, ai_ended_func, 
-add_voice_func, play_audio_func, append_log_func, avatar_got_func) {
+function SetCallbacks(bot_out_func, gen_out_func, img_out_func, ai_ready_func,
+ai_ended_func, add_voice_func, play_audio_func, append_log_func, avatar_got_func) {
 	if (CB_FUNCS === null) {
 		CB_FUNCS = {
 			bot_out: bot_out_func,
 			gen_out: gen_out_func,
+			img_out: img_out_func,
 			ai_ready: ai_ready_func,
 			ai_ended: ai_ended_func,
 			add_voice: add_voice_func,
@@ -179,7 +190,7 @@ function StartScript() {
 		LogToConsole('STDOUT: '+out_str);
 		if (out_str == 'HUMAN_INPUT:') {
 			CHAT_STATE = 'HUMAN_INPUT';
-			CB_FUNCS.ai_ready(false);
+			CB_FUNCS.ai_ready();
 		} else if (out_str.startsWith('BOT_NOANIM:')) {
 			CHAT_STATE = 'BOT_OUTPUT';
 			CB_FUNCS.bot_out(out_str.replace('BOT_NOANIM:', ''), false);
@@ -189,6 +200,9 @@ function StartScript() {
 		} else if (out_str.startsWith('GEN_OUTPUT:')) {
 			CHAT_STATE = 'GEN_OUTPUT';
 			CB_FUNCS.gen_out(out_str.replace('GEN_OUTPUT:', ''));
+		} else if (out_str.startsWith('IMG_OUTPUT:')) {
+			CHAT_STATE = 'IMG_OUTPUT';
+			CB_FUNCS.img_out(out_str.replace('IMG_OUTPUT:', ''));
 		} else if (out_str.startsWith('TTS_TEXT:')) {
 			CHAT_STATE = 'TTS_TEXT';
 			LogToConsole('STDIN: '+TTS_TEXT);
@@ -210,8 +224,8 @@ function StartScript() {
 			AI_ENGINE.stdin.write(INIT_PROMPT+"\r\n");	
 		} else if (out_str == 'START_TEXT:') {
 			CHAT_STATE = 'START_TEXT';
-			LogToConsole('STDIN: '+GEN_CONFIG.start_text);
-			AI_ENGINE.stdin.write(GEN_CONFIG.start_text+"\r\n");
+			LogToConsole('STDIN: '+GEN_CONFIG.prompt_text);
+			AI_ENGINE.stdin.write(GEN_CONFIG.prompt_text+"\r\n");
 			LogToConsole('STDIN: '+GEN_CONFIG.max_len);
 			AI_ENGINE.stdin.write(GEN_CONFIG.max_len+"\r\n");
 			LogToConsole('STDIN: '+GEN_CONFIG.min_len);
@@ -226,6 +240,20 @@ function StartScript() {
 			AI_ENGINE.stdin.write(GEN_CONFIG.typical_p+"\r\n");
 			LogToConsole('STDIN: '+GEN_CONFIG.rep_penalty);
 			AI_ENGINE.stdin.write(GEN_CONFIG.rep_penalty+"\r\n");
+		} else if (out_str == 'IMAGE_PROMPT:') {
+			CHAT_STATE = 'IMAGE_PROMPT';
+			LogToConsole('STDIN: '+GEN_CONFIG.prompt_text);
+			AI_ENGINE.stdin.write(GEN_CONFIG.prompt_text+"\r\n");
+			LogToConsole('STDIN: '+GEN_CONFIG.prompt_neg);
+			AI_ENGINE.stdin.write(GEN_CONFIG.prompt_neg+"\r\n");
+			LogToConsole('STDIN: '+GEN_CONFIG.inference_steps);
+			AI_ENGINE.stdin.write(GEN_CONFIG.inference_steps+"\r\n");
+			LogToConsole('STDIN: '+GEN_CONFIG.guidance_scale);
+			AI_ENGINE.stdin.write(GEN_CONFIG.guidance_scale+"\r\n");
+			LogToConsole('STDIN: '+GEN_CONFIG.image_width);
+			AI_ENGINE.stdin.write(GEN_CONFIG.image_width+"\r\n");
+			LogToConsole('STDIN: '+GEN_CONFIG.image_height);
+			AI_ENGINE.stdin.write(GEN_CONFIG.image_height+"\r\n");
 		} else if (out_str == 'AVATAR_IMG:') {
 			CHAT_STATE = 'AVATAR_IMG';
 			LogToConsole('STDIN: '+APP_CONFIG.avatar_img);
@@ -280,6 +308,8 @@ function StartScript() {
 			AI_ENGINE.stdin.write(APP_CONFIG.model_args+"\r\n");
 			LogToConsole('STDIN: '+APP_CONFIG.comp_dev);
 			AI_ENGINE.stdin.write(APP_CONFIG.comp_dev+"\r\n");
+			LogToConsole('STDIN: '+APP_CONFIG.start_meth);
+			AI_ENGINE.stdin.write(APP_CONFIG.start_meth+"\r\n");
 			LogToConsole('STDIN: '+APP_CONFIG.avatar_img);
 			AI_ENGINE.stdin.write(APP_CONFIG.avatar_img+"\r\n");
 		} else if (out_str.startsWith('PLAY_SPEECH:')) {
@@ -288,7 +318,10 @@ function StartScript() {
 			CB_FUNCS.play_audio(audio_file);
 		} else if (out_str.startsWith('INIT_DONE:')) {
 			CHAT_STATE = 'INIT_DONE';
-			CB_FUNCS.ai_ready();
+			CB_FUNCS.ai_ready('AI_UI_DEFAULT');
+		} else if (out_str.startsWith('CLEAR_DONE:')) {
+			CHAT_STATE = 'CLEAR_DONE';
+			CB_FUNCS.ai_ready(out_str.replace('CLEAR_DONE:', ''));
 		} else if (DONE_VOICES == false && out_str.startsWith('VOICE_NAME:')) {
 			const voices = out_str.trim().split("\n");
 			for (let i=0; i<voices.length; i++) {

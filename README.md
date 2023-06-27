@@ -6,7 +6,7 @@ A simple user interface for interacting with AI. Includes a voiced chat bot feat
 
 Download the latest Windows release of AI UI then download and install the following:
 
-- Python (3.8.10 recommended) (https://www.python.org/downloads/windows/)
+- Python (3.10.6 recommended) (https://www.python.org/downloads/windows/)
 - ffmpeg (https://ffmpeg.org/download.html)
 
 Optional:
@@ -41,9 +41,9 @@ pip uninstall tensorflow
 pip install "tensorflow<2.11"
 ```
 
-Next you'll need to download a text generation AI model from a site like [Hugging Face](https://huggingface.co/models). Models which have been fine-tuned on conversational text should work best for the chat bot.
+Next you'll need to download a text generation AI model from [Hugging Face](https://huggingface.co/models) (must use the HF Transformers format). Models which have been fine-tuned on conversational text should work best for the chat bot.
 
-If you want the chat bot to be capable of sending images you will also need to download a separate image generation AI model which uses the Stable Diffusion pipeline, many can be found on Hugging Face.
+If you want generate images or want the chat bot to send messages with images you will also need to download an image generation AI model which uses the HF Diffusers format, many can be found on Hugging Face.
 
 Now you can run AI_UI.exe but it wont do much until you visit the Settings tab and fill out the required information. The 'Python Binary' setting would be `C:/venv/Scripts/python.exe` for this example setup.
 

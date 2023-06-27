@@ -105,6 +105,15 @@ ipcMain.on('copy-text', (event, payload) => {
 	}
 });
 
+ipcMain.on('copy-image', (event, payload) => {
+	if (payload.img != '') {
+		clipboard.writeImage(payload.img);
+		dialog.showMessageBox(win, { type: "info", message: "Image copied to clipboard." });
+	} else {
+		dialog.showMessageBox(win, { type: "info", message: "There is no image to copy!" });
+	}
+});
+
 ipcMain.on('show-alert', (event, payload) => {
 	const msg_type = payload.type ? payload.type : 'info';
 	dialog.showMessageBox(win, { type: msg_type, message: payload.msg });
@@ -112,9 +121,9 @@ ipcMain.on('show-alert', (event, payload) => {
 
 // ---- ENGINE INTERCOM ----
 
-function ChatAIReady(init_chat=true) {
-	if (init_chat) {
-		win.webContents.send('init-ui', { state: true });
+function ChatAIReady(init_prompt='') {
+	if (init_prompt != '') {
+		win.webContents.send('init-ui', { state: init_prompt });
 	} else {
 		win.webContents.send('ai-ready');
 	}
@@ -133,6 +142,10 @@ function ShowGenTxt(gen_txt) {
 	win.webContents.send('gen-result', { txt: gen_txt });
 }
 
+function ShowGenImg(gen_img) {
+	win.webContents.send('img-result', { img: gen_img });
+}
+
 function AppendLog(log_msg) {
 	win.webContents.send('append-log', { msg: log_msg });
 }
@@ -147,6 +160,11 @@ function GotAvatar(got_avatar) {
 
 ipcMain.on('send-msg', (event, payload) => {
 	core.sendMsg(payload.msg);
+});
+
+ipcMain.on('gen-image', (event, payload) => {
+	core.configGen(payload);
+	core.sendMsg('gen_image');
 });
 
 ipcMain.on('gen-text', (event, payload) => {
@@ -190,6 +208,24 @@ ipcMain.on('config-app', (event, payload) => {
 			win.webContents.send('load-config', {configs:core.getConfigs(), skip_inputs:true});
 			if (core.stopScript('RESTART')) {
 				core.startScript();
+			}
+			let customModel = false;
+			if (payload.model_type == 3 || payload.model_type == 4) {
+				customModel = true;
+			} else {
+				let args = payload.model_args.split(',');
+				for (let i=0; i<args.length; i++) {
+					const arg = args[i].trim();
+					if (arg.startsWith('custom_model_code=') || arg.startsWith('custom_token_code=')) {
+						let val = arg.substring(arg.indexOf('=')).toLowerCase();
+						if (arg == 'false' || arg == '0') continue;
+						customModel = true;
+						break;
+					}
+				}
+			}
+			if (customModel && payload.model_dir.length > 1 && (payload.model_dir[1] == ':' || fs.existsSync(payload.model_dir))) {
+				dialog.showMessageBox(win, { type: "warning", message: "It appears you are using a model with custom code, this may not load from a Model Folder, use the Model ID instead." });
 			}
 		}
 	});
@@ -257,7 +293,7 @@ ipcMain.handle('restart-script', (event) => {
 });
 
 ipcMain.handle('start-script', (event) => {
-	core.setCallbacks(ShowBotMsg, ShowGenTxt, ChatAIReady, ChatAIEnded, AddVoice, PlayAudio, AppendLog, GotAvatar);
+	core.setCallbacks(ShowBotMsg, ShowGenTxt, ShowGenImg, ChatAIReady, ChatAIEnded, AddVoice, PlayAudio, AppendLog, GotAvatar);
 	if (fs.existsSync('./config.json')) {
 		try {
 			core.setConfigs(JSON.parse(fs.readFileSync('./config.json')));
