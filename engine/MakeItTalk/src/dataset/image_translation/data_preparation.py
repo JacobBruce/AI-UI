@@ -11,7 +11,7 @@
 import os, glob, time, sys
 import numpy as np
 import cv2
-from src.dataset.utils.Av2Flau_Convertor import Av2Flau_Convertor
+#from src.dataset.utils.Av2Flau_Convertor import Av2Flau_Convertor
 import platform
 
 if platform.release() == '4.4.0-83-generic':
@@ -72,7 +72,7 @@ def landmark_extraction(si, ei):
         with open(os.path.join(out_dir, 'filename_index_new.txt'), 'w') as f:
             for i, file in enumerate(files):
                 f.write('{} {}\n'.format(i, file))
-    else:
+    """else:
         with open(os.path.join(out_dir, 'filename_index_new.txt'), 'r') as f:
             lines = f.readlines()
 
@@ -99,7 +99,7 @@ def landmark_extraction(si, ei):
             c = Av2Flau_Convertor(video_dir=os.path.join(src_dir, file),
                                   out_dir=out_dir, idx=idx)
             c.convert() #  (save_audio=False, register=False, show=False)
-            print('Idx: {}, Processed time (min): {}'.format(idx, (time.time() - st) / 60.0))
+            print('Idx: {}, Processed time (min): {}'.format(idx, (time.time() - st) / 60.0))"""
 
 def landmark_image_to_data(si, ei, show=False):
     '''

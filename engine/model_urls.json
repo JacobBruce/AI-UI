@@ -1,0 +1,47 @@
+{
+	"MIT":[
+		{
+			"src":"https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth",
+			"dest":"/MakeItTalk/examples/ckpt/s3fd-619a316812.pth", "extract": 0
+		},
+		{
+			"src":"https://github.com/JacobBruce/AI-UI/releases/download/ModelFiles/AIUI_MakeItTalk_models.zip",
+			"dest": "/AIUI_MakeItTalk_Models.zip", "extract": { "dir": "/MakeItTalk/", "check": [
+				"/MakeItTalk/examples/ckpt/3DFAN4-4a694010b9.pt",
+				"/MakeItTalk/examples/ckpt/ckpt_116_i2i_state.pt",
+				"/MakeItTalk/examples/ckpt/ckpt_autovc.pth",
+				"/MakeItTalk/examples/ckpt/ckpt_content_branch.pth",
+				"/MakeItTalk/examples/ckpt/ckpt_speaker_branch.pth",
+				"/MakeItTalk/examples/ckpt/depth-6c4283c0e0.pt"
+			] }
+		}
+	],
+	"W2L":[
+		{
+			"src":"https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth",
+			"dest":"/MakeItTalk/examples/ckpt/s3fd-619a316812.pth", "extract": 0
+		},
+		{
+			"src":"https://huggingface.co/commanderx/Wav2Lip-HD/resolve/main/checkpoints/wav2lip_gan.pth",
+			"dest":"/Wav2Lip/checkpoints/wav2lip_gan.pth", "extract": 0
+		}
+	],
+	"ST":[
+		{
+			"src":"https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/mapping_00229-model.pth.tar",
+			"dest":"/SadTalker/checkpoints/mapping_00229-model.pth.tar", "extract": 0
+		},
+		{
+			"src":"https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/SadTalker_V0.0.2_256.safetensors",
+			"dest":"/SadTalker/checkpoints/SadTalker_V0.0.2_256.safetensors", "extract": 0
+		},
+		{
+			"src":"https://github.com/xinntao/facexlib/releases/download/v0.1.0/alignment_WFLW_4HG.pth",
+			"dest":"/SadTalker/gfpgan/weights/alignment_WFLW_4HG.pth", "extract": 0
+		},
+		{
+			"src":"https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth",
+			"dest":"/SadTalker/gfpgan/weights/detection_Resnet50_Final.pth", "extract": 0
+		}
+	]
+}

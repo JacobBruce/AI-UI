@@ -64,6 +64,7 @@ footer {
 
 #content {
 	width: 100%;
+	min-height: 300px;
 	position: absolute;
 	top: 30px;
 	bottom: 0px;
@@ -74,7 +75,7 @@ footer {
 	margin-top: 10px;
 }
 
-#chat_app, #txtgen_app, #imggen_app {
+#chat_app, #txtgen_app, #ttsgen_app, #imggen_app {
 	width: 100%;
 	min-width: 700px;
 	position: absolute;
@@ -82,7 +83,7 @@ footer {
 	bottom: 0px;
 }
 
-#chat_box, #txtgen_box, #imggen_box {
+#chat_box, #txtgen_box, #ttsgen_box, #imggen_box {
 	height: 100%;
 	min-width: 400px;
 	position: absolute;
@@ -92,7 +93,7 @@ footer {
 	box-sizing: border-box;
 }
 
-#gen_result, #img_result {
+#gen_result, #tts_result, #img_result {
 	padding: 20px;
 	position: absolute;
 	top: 0px;
@@ -124,7 +125,7 @@ footer {
 	bottom: 54px;
 }
 
-#gen_exp_box {
+#gen_exp_box, #tts_exp_box {
 	position: absolute;
 	top: 300px;
 	left: 0px;
@@ -141,7 +142,7 @@ footer {
 	border: none;
 }
 
-#gen_exp_btn {
+#gen_exp_btn, #tts_exp_btn {
 	position: absolute;
 	right: 100px;
 	top: 5px;
@@ -151,9 +152,19 @@ footer {
 }
 
 #copy_txt_btn, #read_txt_btn,
-#copy_img_btn, #open_dir_btn {
+#copy_img_btn, #img_dir_btn,
+#tts_dir_btn, #clone_voice_btn {
 	width: 170px;
 	margin: 20px 30px 0px 30px;
+}
+
+#wav_dir_btn {
+	width: 130px;
+}
+
+#voice_sample, #vae_file, #lora_file,
+#lora_dir, #lora_folder {
+	width: 170px;
 }
 
 #thinking, .generating {
@@ -176,7 +187,7 @@ footer {
 	background-color: #222429;
 }
 
-#txtgen_side, #imggen_side {
+#txtgen_side, #ttsgen_side, #imggen_side {
 	width: 300px;
 	position: absolute;
 	top: 0px;
@@ -249,7 +260,7 @@ footer {
 	bottom: 50px;
 }
 
-#send_box, .gen_input_box {
+#send_box, #cmd_input_box, .gen_input_box {
 	width: 100%;
 	height: 32px;
 	position: absolute;
@@ -266,7 +277,8 @@ footer {
 	box-sizing: border-box;
 }
 
-#gen_text_box, #img_text_box {
+#gen_text_box, #tts_text_box, 
+#img_text_box, #cmd_text_box {
 	position: absolute;
 	left: 0px;
 	right: 101px;
@@ -274,6 +286,10 @@ footer {
 	border: 1px solid #a9bbde;
 	border-right: none;
 	box-sizing: border-box;
+}
+
+#cmd_text_box {
+	right: 102px;
 }
 
 #butt_box {
@@ -286,7 +302,8 @@ footer {
 	box-sizing: border-box;
 }
 
-#gen_butt_box, #img_butt_box {
+#gen_butt_box, #tts_butt_box, 
+#img_butt_box, #cmd_butt_box {
 	width: 101px;
 	position: absolute;
 	right: 0px;
@@ -294,6 +311,11 @@ footer {
 	border: 1px solid #a9bbde;
 	border-right: none;
 	box-sizing: border-box;
+}
+
+#cmd_butt_box {
+	width: 102px;
+	border-right: 1px solid #a9bbde;
 }
 
 #img_butt_box {
@@ -305,7 +327,8 @@ footer {
 	max-height: 100%;
 }
 
-#text_inp, #gen_text_inp {
+#text_inp, #gen_text_inp, 
+#tts_text_inp, #cmd_text_inp {
 	width: 100%;
 	height: 30px;
 	padding: 6px 10px;
@@ -386,15 +409,35 @@ footer {
 	padding: 0px;
 }
 
-
 #edit_btn:hover:enabled {
 	cursor: pointer;
 }
 
-#gen_btn, #img_btn {
+#gen_btn, #tts_btn, #img_btn, #cmd_btn {
 	width: 100px;
 	border: none;
 	display: inline-block;
+}
+
+#inst_help_btn, #args_help_btn {
+	font-size: 20px;
+	font-weight: bold;
+	border-radius: 8px;
+	background-color: #49494d;
+	margin: 15px 5px 0px 5px;
+	border: 1px solid #272729;
+}
+
+#inst_help_btn {
+	color: #c4c4cf;
+}
+
+#args_help_btn {
+	color: #868687;
+}
+
+#inst_help_btn:hover, #args_help_btn:hover {
+	cursor: pointer;
 }
 
 #about_box {
@@ -403,13 +446,27 @@ footer {
 	overflow-y: auto;
 }
 
-#console_tab, #config_tab, #about_tab {
+#console_tab, #config_tab, #about_tab, #help_tab {
 	overflow-y: auto;
 	max-height: 100%;
 }
 
+#help_tab {
+	padding: 0px 25px;
+}
+
 #log_box {
 	margin: 10px;
+}
+
+#console_box {
+	min-width: 400px;
+	position: absolute;
+	left: 0px;
+	right: 0px;
+	bottom: 32px;
+	top: 0px;
+	overflow-y: auto;
 }
 
 .hidden {
@@ -622,6 +679,22 @@ footer {
 	border-radius: 6px;
 	text-align: left;
 	white-space: pre-wrap;
+}
+
+.dark_bg {
+	display: inline-block;
+	background-color: #2c2c2e;
+	padding: 5px 8px;
+	border-radius: 6px;
+	margin-bottom: 2px;
+}
+
+.arg_title {
+	font-weight: normal;
+}
+
+.wide_hr {
+	width: 100%;
 }
 
 .chat_img {

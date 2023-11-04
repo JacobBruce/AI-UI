@@ -5,14 +5,28 @@ import torch
 from math import ceil
 from src.autovc.retrain_version.model_vc_37_1 import Generator
 from pydub import AudioSegment
-import pynormalize.pynormalize
-from scipy.io import  wavfile as wav
+#import pynormalize.pynormalize
+#import librosa
+from scipy.io import wavfile
 from scipy.signal import stft
 
+#NOTE: I tried removing the pydub dependency by creating
+# my own function to match the target amplitude, but it
+# produced odd results. It seems like the model relies 
+# on something pydub does when exporting the wav file.
+# pydub claims to handle wav files without ffmpeg but
+# it still produces a warning when ffmpeg is missing
 
 def match_target_amplitude(sound, target_dBFS):
     change_in_dBFS = target_dBFS - sound.dBFS
     return sound.apply_gain(change_in_dBFS)
+	
+"""def set_loudness(audio_file, target_level):
+    y, sr = librosa.load(audio_file)
+    loudness = np.sqrt((y*y).sum()/len(y))
+    if loudness == 0.0: return
+    y *= (target_level / loudness) * 32768
+    wavfile.write(audio_file, sr, y.round().astype(np.int16))"""
 
 class AutoVC_mel_Convertor():
 
@@ -56,7 +70,7 @@ class AutoVC_mel_Convertor():
         sound = AudioSegment.from_file(audio_file, "wav")
         normalized_sound = match_target_amplitude(sound, -20.0)
         normalized_sound.export(audio_file, format='wav')
-
+        #set_loudness(audio_file, 0.1)
 
         from src.autovc.retrain_version.vocoder_spec.extract_f0_func import extract_f0_func_audiofile
         S, f0_norm = extract_f0_func_audiofile(audio_file, 'M')
@@ -155,15 +169,19 @@ class AutoVC_mel_Convertor():
         FPS = 25
 
         # Step 1 : Normalize the volume
-        target_dbfs = TARGET_AUDIO_DBFS
+        """target_dbfs = TARGET_AUDIO_DBFS
         pynormalize.process_files(
             Files=[audio_file],
             target_dbfs=target_dbfs,
             directory=os.path.join(self.src_dir, 'raw_wav')
-        )
+        )"""
+        sound = AudioSegment.from_file(audio_file, "wav")
+        normalized_sound = match_target_amplitude(sound, -20.0)
+        normalized_sound.export(audio_file, format='wav')
+        #set_loudness(audio_file, 0.1)
 
         #  Step 2 : load wav file
-        sample_rate, samples = wav.read(audio_file)
+        sample_rate, samples = wavfile.read(audio_file)
         assert (sample_rate == 16000)
         if (len(samples.shape) > 1):
             samples = samples[:, 0]  # pick mono
@@ -220,6 +238,7 @@ class AutoVC_mel_Convertor():
         sound = AudioSegment.from_file(audio_file, "wav")
         normalized_sound = match_target_amplitude(sound, -20.0)
         normalized_sound.export(audio_file, format='wav')
+        #set_loudness(audio_file, 0.1)
 
         from src.autovc.retrain_version.vocoder_spec.extract_f0_func import extract_f0_func_audiofile
         x_real_src, f0_norm = extract_f0_func_audiofile(audio_file, 'F')

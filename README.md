@@ -1,15 +1,16 @@
 # AI UI
 
-A simple user interface for interacting with AI. Includes a voiced chat bot feature with an animated and customizable avatar. Built with Electron.
+A user-friendly interface for interacting with AI. Includes a voiced chat bot feature with an animated and customizable avatar. Built with Electron.
+
+![AI UI Screenshot](./img/screenshot.jpg)
 
 ## Installing on Windows
 
 Download the latest Windows release of AI UI then download and install the following:
 
 - Python (3.10.6 recommended) (https://www.python.org/downloads/windows/)
-- ffmpeg (https://ffmpeg.org/download.html)
 
-Optional:
+Optional but highly recommended:
 - CUDA 11.7 (for Nvidia GPU's) (https://developer.nvidia.com/cuda-11-7-0-download-archive)
 
 Now open a command prompt as an administrator and create a Python virtual environment using this command:
@@ -35,18 +36,12 @@ pip uninstall torch torchvision torchaudio
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117
 ```
 
-Apparently the latest versions of Tensorflow for Windows don't have GPU support so you may also need to run these commands:
-```
-pip uninstall tensorflow
-pip install "tensorflow<2.11"
-```
+Now you can visit the Settings tab in AI UI and fill out the required information. The 'Python Binary' setting would be `C:/venv/Scripts/python.exe` for this example setup. Check the Console tab for errors if the engine wont start.
 
-Next you'll need to download a text generation AI model from [Hugging Face](https://huggingface.co/models) (must use the HF Transformers format). Models which have been fine-tuned on conversational text should work best for the chat bot.
+To make the chat bot work you'll need to download a text generation AI model from [Hugging Face](https://huggingface.co/) (must use the HF Transformers format). Models which have been fine-tuned on conversational text should work best for the chat bot.
 
-If you want generate images or want the chat bot to send messages with images you will also need to download an image generation AI model which uses the HF Diffusers format, many can be found on Hugging Face.
-
-Now you can run AI_UI.exe but it wont do much until you visit the Settings tab and fill out the required information. The 'Python Binary' setting would be `C:/venv/Scripts/python.exe` for this example setup.
+If you want to generate images or want the chat bot to send messages with images you will also need to download an image generation AI model which uses the HF Diffusers format, many can be found on Hugging Face.
 
 ## Model Files
 
-This repository doesn't contain the large model files from MakeItTalk. However they should be included with AI UI releases if you need them.
+This repository doesn't contain the large model files from MakeItTalk, Wav2Lip, or SadTalker. They will be automatically downloaded by AI UI when they are needed.

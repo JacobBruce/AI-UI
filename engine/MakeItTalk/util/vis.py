@@ -12,7 +12,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import cv2
-import ffmpeg
+#import ffmpeg
 
 OTHER_SPECIFIC_VOICE = None
 

@@ -1,7 +1,9 @@
 window.aiuiAPI = {
 	openAvatar: () => ipcRenderer.invoke('dialog:openAvatar'),
+	openSample: () => ipcRenderer.invoke('dialog:openSample'),
 	openFile: () => ipcRenderer.invoke('dialog:openFile'),
 	openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+	openFileFolder: () => ipcRenderer.invoke('dialog:openFileFolder'),
 	getAppVersion: () => ipcRenderer.invoke('getAppVersion')
 }
 

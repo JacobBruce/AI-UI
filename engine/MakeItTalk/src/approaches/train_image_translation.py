@@ -11,7 +11,7 @@
 from src.models.model_image_translation import ResUnetGenerator, VGGLoss
 import torch
 import torch.nn as nn
-from tensorboardX import SummaryWriter
+#from tensorboardX import SummaryWriter
 import time
 import numpy as np
 import cv2
@@ -80,9 +80,9 @@ class Image_translation_block():
             self.optimizer = torch.optim.Adam(self.G.parameters(), lr=opt_parser.lr, betas=(0.5, 0.999))
 
             # writer
-            if(opt_parser.write):
-                self.writer = SummaryWriter(log_dir=os.path.join(opt_parser.log_dir, opt_parser.name))
-                self.count = 0
+            #if(opt_parser.write):
+            #    self.writer = SummaryWriter(log_dir=os.path.join(opt_parser.log_dir, opt_parser.name))
+            #    self.count = 0
 
             # ===========================================================
             #       online landmark alignment : Awing
@@ -370,8 +370,7 @@ class Image_translation_block():
             fls[:, 0::3] += 130
             fls[:, 1::3] += 80
 
-        #writer = cv2.VideoWriter('out.mp4', cv2.VideoWriter_fourcc(*'mjpg'), 62.5, (256 * 3, 256))
-        writer = cv2.VideoWriter('out.mp4', cv2.VideoWriter_fourcc(*'mjpg'), 62.5, (256, 256))
+        writer = cv2.VideoWriter('examples/out.mp4', cv2.VideoWriter_fourcc(*'mjpg'), 62.5, (256, 256))
 
         for i, frame in enumerate(fls):
 
@@ -393,35 +392,24 @@ class Image_translation_block():
 
             g_out = g_out.cpu().detach().numpy().transpose((0, 2, 3, 1))
             g_out[g_out < 0] = 0
-            ref_in = image_in[:, 3:6, :, :].cpu().detach().numpy().transpose((0, 2, 3, 1))
-            fls_in = image_in[:, 0:3, :, :].cpu().detach().numpy().transpose((0, 2, 3, 1))
-            # g_out = g_out.cpu().detach().numpy().transpose((0, 3, 2, 1))
-            # g_out[g_out < 0] = 0
-            # ref_in = image_in[:, 3:6, :, :].cpu().detach().numpy().transpose((0, 3, 2, 1))
-            # fls_in = image_in[:, 0:3, :, :].cpu().detach().numpy().transpose((0, 3, 2, 1))
 
             if(grey_only):
-                g_out_grey =np.mean(g_out, axis=3, keepdims=True)
+                g_out_grey = np.mean(g_out, axis=3, keepdims=True)
                 g_out[:, :, :, 0:1] = g_out[:, :, :, 1:2] = g_out[:, :, :, 2:3] = g_out_grey
 
-
             for i in range(g_out.shape[0]):
-                #frame = np.concatenate((ref_in[i], g_out[i], fls_in[i]), axis=1) * 255.0
                 frame = g_out[i] * 255.0
                 writer.write(frame.astype(np.uint8))
 
         writer.release()
         print('Time - only video:', time.time() - st)
 
-        if(filename is None):
-            filename = 'v'
-        os.system('ffmpeg -loglevel error -y -i out.mp4 -i {} -pix_fmt yuv420p -strict -2 examples/{}_{}.mp4'.format(
-            'examples/'+filename[9:-16]+'.wav',
-            prefix, filename[:-4]))
+        #if(filename is None): filename = prefix+'_pred_fls_speech_audio_embed'
+        #os.system('ffmpeg -loglevel error -y -i out.mp4 -i examples/tmp.wav -pix_fmt yuv420p -strict -2 examples/'+filename+'.mp4')
         # os.system('rm out.mp4')
-        os.remove('out.mp4')
+        #os.remove('out.mp4')
 
-        print('Time - ffmpeg add audio:', time.time() - st)
+        #print('Time - ffmpeg add audio:', time.time() - st)
 
 
 
