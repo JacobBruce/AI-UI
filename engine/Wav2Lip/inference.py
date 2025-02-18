@@ -9,7 +9,7 @@ from glob import glob
 import torch, face_detection
 from models import Wav2Lip
 import platform
-from moviepy.editor import VideoFileClip, AudioFileClip
+from moviepy import VideoFileClip, AudioFileClip, CompositeAudioClip
 
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
@@ -255,8 +255,8 @@ def anim_face(chat_wav):
 		video_clip = VideoFileClip('temp/result.mp4')
 		audio_clip = AudioFileClip('temp/tmp.wav')
 		
-		final_clip = video_clip.set_audio(audio_clip)
-		final_clip.write_videofile('results/face_pred_fls_speech_audio_embed.mp4')
+		video_clip.audio = CompositeAudioClip([audio_clip])
+		video_clip.write_videofile('results/face_pred_fls_speech_audio_embed.mp4')
 
 	if (os.path.isfile('temp/result.mp4')): os.remove('temp/result.mp4')
 	if (os.path.isfile('temp/tmp.wav')): os.remove('temp/tmp.wav')

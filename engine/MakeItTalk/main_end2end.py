@@ -23,7 +23,7 @@ from thirdparty.resemblyzer.speaker_emb import get_spk_emb
 from src.approaches.train_image_translation import Image_translation_block
 from src.autovc.AutoVC_mel_Convertor_retrain_version import AutoVC_mel_Convertor
 from src.approaches.train_audio2landmark import Audio2landmark_model
-from moviepy.editor import VideoFileClip, AudioFileClip
+from moviepy import VideoFileClip, AudioFileClip, CompositeAudioClip
 
 ADD_NAIVE_EYE = True
 CLOSE_INPUT_FACE_MOUTH = False
@@ -238,8 +238,8 @@ def AnimFace(chat_wav):
 		video_clip = VideoFileClip('examples/out.mp4')
 		audio_clip = AudioFileClip('examples/tmp.wav')
 		
-		final_clip = video_clip.set_audio(audio_clip)
-		final_clip.write_videofile('examples/face_pred_fls_speech_audio_embed.mp4')
+		video_clip.audio = CompositeAudioClip([audio_clip])
+		video_clip.write_videofile('examples/face_pred_fls_speech_audio_embed.mp4')
 
 	if (os.path.isfile('examples/out.mp4')): os.remove('examples/out.mp4')
 	if (os.path.isfile('examples/tmp.wav')): os.remove('examples/tmp.wav')

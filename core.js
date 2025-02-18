@@ -3,13 +3,17 @@ const fs = require('fs');
 
 var CHAT_CONFIG = { human_name: 'Human', bot_name: 'Bot', bot_voice: 0, speech_vol: 1.0, speech_rate: 200, pitch_shift: 0, talk_mode: 0, tts_mode: 0, anim_mode: 0 };
 var AI_CONFIG = { msg_mem: 5, max_res: 50, min_res: 1, base_temp: 0.8, prompt_p: 0, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0 };
-var APP_CONFIG = { avatar_img: '', script_dir: '', python_bin: '', model_dir: '', sd_model: '', tts_model: '', voc_model: '', model_args: '', model_type: 0, imodel_type: 0, smodel_type: 0, comp_dev: 'auto', start_meth: 'text' };
+var APP_CONFIG = {
+	avatar_img: '', script_dir: '', python_bin: '', model_dir: '', sd_model: '', tts_model: '', sr_model: '', model_args: '', model_type: 0, imodel_type: 0, smodel_type: 0, comp_dev: 'auto', start_meth: 'text', //main
+	enable_bbcode: 1, enable_tooluse: 1, enable_devmode: 0, enable_asasro: 0, start_rec_keys: '', stop_rec_keys: '' //other
+};
 var GEN_CONFIG = { 
 	prompt_text: '', prompt_neg: '', image_width: 'auto', image_height: 'auto', inference_steps: 50, guidance_scale: 7.5, safety_check: 1, vae_file: '', lora_file: '', lora_dir: '', //image
 	max_len: 50, min_len: 1, temp: 0.8, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0, //text
 	tts_voice: 0, tts_vol: 1.0, tts_rate: 200, tts_pitch: 0, tts_mode: 0 //speech
 };
 
+var ENDL = "\r\n";
 var AI_ENGINE = null;
 var CB_FUNCS = null;
 var CMD_PROC = null;
@@ -18,11 +22,14 @@ var CMD_CWD = '';
 var CMD_STATE = 'STOPPED';
 var ENGINE_STATE = 'STOPPED';
 var CHAT_STATE = 'INIT';
+var CHAT_FILES = '';
+var CLONE_MODEL = '';
 var CLONE_SAMPLE = '';
 var CLONE_NAME = '';
+var CLONE_TEXT = '';
 var INIT_PROMPT = '';
 var TTS_TEXT = '';
-var TTS_MODES = ['SYS', 'T5'];
+var TTS_MODES = ['SYS', 'AI'];
 
 function EngineRunning() {
 	return (ENGINE_STATE == 'STARTED' || ENGINE_STATE == 'RESTART');
@@ -72,8 +79,10 @@ function SetUsernames(names) {
 }
 
 function SetCloneVoice(voice) {
+	CLONE_MODEL = voice.model;
 	CLONE_SAMPLE = voice.sample;
 	CLONE_NAME = voice.name;
+	CLONE_TEXT = voice.transcript;
 }
 
 function SetPrompt(new_prompt) {
@@ -82,6 +91,10 @@ function SetPrompt(new_prompt) {
 
 function SetReadText(tts_txt) {
 	TTS_TEXT = tts_txt;
+}
+
+function SetChatFiles(chat_files) {
+	CHAT_FILES = chat_files;
 }
 
 function ConfigSpeech(speech_config) {
@@ -115,9 +128,18 @@ function ConfigApp(app_config) {
 	APP_CONFIG.model_args = app_config.model_args;
 	APP_CONFIG.sd_model = app_config.sd_model;
 	APP_CONFIG.tts_model = app_config.tts_model;
-	APP_CONFIG.voc_model = app_config.voc_model;
+	APP_CONFIG.sr_model = app_config.sr_model;
 	APP_CONFIG.comp_dev = app_config.comp_dev;
 	APP_CONFIG.start_meth = app_config.start_meth;
+	APP_CONFIG.enable_bbcode = app_config.enable_bbcode;
+	APP_CONFIG.enable_tooluse = app_config.enable_tooluse;
+}
+
+function ConfigOther(app_config) {
+	APP_CONFIG.enable_devmode = app_config.enable_devmode;
+	APP_CONFIG.enable_asasro = app_config.enable_asasro;
+	APP_CONFIG.start_rec_keys = app_config.start_rec_keys;
+	APP_CONFIG.stop_rec_keys = app_config.stop_rec_keys;
 }
 
 function ConfigGen(gen_config) {
@@ -150,13 +172,14 @@ function ConfigGen(gen_config) {
 	}
 }
 
-function SetCallbacks(bot_out_func, gen_out_func, tts_out_func, img_out_func, clone_out_func, ai_ready_func, 
-ai_ended_func, add_voices_func, clear_voices_func, play_audio_func, append_log_func, avatar_got_func) {
+function SetCallbacks(bot_out_func, gen_out_func, tts_out_func, asr_out_func, img_out_func, clone_out_func, ai_ready_func, 
+ai_ended_func, add_voices_func, clear_voices_func, play_audio_func, append_log_func, avatar_got_func, got_tools_func) {
 	if (CB_FUNCS === null) {
 		CB_FUNCS = {
 			bot_out: bot_out_func,
 			gen_out: gen_out_func,
 			tts_out: tts_out_func,
+			asr_out: asr_out_func,
 			img_out: img_out_func,
 			clone_out: clone_out_func,
 			ai_ready: ai_ready_func,
@@ -165,8 +188,17 @@ ai_ended_func, add_voices_func, clear_voices_func, play_audio_func, append_log_f
 			clear_voices: clear_voices_func,
 			play_audio: play_audio_func,
 			append_log: append_log_func,
-			avatar_got: avatar_got_func
+			avatar_got: avatar_got_func,
+			got_tools: got_tools_func
 		};
+	}
+}
+
+function SetPlatform(platform_name) {
+	if (platform_name.startsWith('win')) {
+		ENDL = "\r\n";
+	} else {
+		ENDL = "\n";
 	}
 }
 
@@ -183,7 +215,7 @@ function SendMsg(message, req_state='HUMAN_INPUT') {
 	}
 	if (CHAT_STATE == req_state || req_state == 'ANY') {
 		LogToConsole('STDIN: '+message);
-		AI_ENGINE.stdin.write(message+"\r\n");
+		AI_ENGINE.stdin.write(message+ENDL);
 	} else {
 		LogToConsole('ERROR: wrong state for SendMsg(), CHAT_STATE='+CHAT_STATE);
 	}
@@ -221,12 +253,12 @@ function RunCommand(cmd) {
 				LogToConsole(CMD_CWD+'>'+cmd_str);
 				if (cmd_str.startsWith('cd ')) {
 					CMD_CWD = cmd_str.replace('cd ', '').replaceAll('"', '').trim();
-					CMD_PROC.stdin.write("cd\r\n");
+					CMD_PROC.stdin.write("cd"+ENDL);
 				} else {
-					CMD_PROC.stdin.write(cmd_str+"\r\n");
+					CMD_PROC.stdin.write(cmd_str+ENDL);
 				}
 			} else if (out_str == 'AIUI_CWD:') {
-				CMD_PROC.stdin.write(CMD_CWD+"\r\n");
+				CMD_PROC.stdin.write(CMD_CWD+ENDL);
 			} else if (out_str.startsWith('AIUI_CWD:')) {
 				CMD_CWD = out_str.replace('AIUI_CWD:', '');
 			} else {
@@ -247,7 +279,7 @@ function RunCommand(cmd) {
 		});
 	} else if (!CMD_LOCK) {
 		LogToConsole(CMD_CWD+'>'+cmd_str);
-		CMD_PROC.stdin.write(cmd_str+"\r\n");
+		CMD_PROC.stdin.write(cmd_str+ENDL);
 	} else {
 		return false;
 	}
@@ -326,170 +358,188 @@ function StartScript() {
 		} else if (out_str.startsWith('CLONE_OUTPUT:')) {
 			CHAT_STATE = 'CLONE_OUTPUT';
 			CB_FUNCS.clone_out(out_str.replace('CLONE_OUTPUT:', ''));
+		} else if (out_str.startsWith('ASR_OUTPUT:')) {
+			CHAT_STATE = 'ASR_OUTPUT';
+			CB_FUNCS.asr_out(out_str.replace('ASR_OUTPUT:', ''));
 		} else if (out_str.startsWith('TTS_OUTPUT:')) {
 			CHAT_STATE = 'TTS_OUTPUT';
 			CB_FUNCS.tts_out(out_str.replace('TTS_OUTPUT:', ''));
 		} else if (out_str.startsWith('TTS_TEXT:')) {
 			CHAT_STATE = 'TTS_TEXT';
 			LogToConsole('STDIN: '+TTS_TEXT);
-			AI_ENGINE.stdin.write(TTS_TEXT+"\r\n");
+			AI_ENGINE.stdin.write(TTS_TEXT+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.tts_voice);
-			AI_ENGINE.stdin.write(GEN_CONFIG.tts_voice+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.tts_voice+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.tts_vol);
-			AI_ENGINE.stdin.write(GEN_CONFIG.tts_vol+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.tts_vol+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.tts_rate);
-			AI_ENGINE.stdin.write(GEN_CONFIG.tts_rate+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.tts_rate+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.tts_pitch);
-			AI_ENGINE.stdin.write(GEN_CONFIG.tts_pitch+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.tts_pitch+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.tts_mode);
-			AI_ENGINE.stdin.write(GEN_CONFIG.tts_mode+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.tts_mode+ENDL);
 		} else if (out_str.startsWith('SPEAK_TEXT:')) {
 			CHAT_STATE = 'SPEAK_TEXT';
 			LogToConsole('STDIN: '+TTS_TEXT);
-			AI_ENGINE.stdin.write(TTS_TEXT+"\r\n");
+			AI_ENGINE.stdin.write(TTS_TEXT+ENDL);
 		} else if (out_str.startsWith('GOT_AVATAR:')) {
 			CHAT_STATE = 'GOT_AVATAR';
 			CB_FUNCS.avatar_got(out_str.replace('GOT_AVATAR:', ''));
 		} else if (out_str == 'YOUR_NAME:') {
 			CHAT_STATE = 'HUMAN_NAME';
 			LogToConsole('STDIN: '+CHAT_CONFIG.human_name);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.human_name+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.human_name+ENDL);
 		} else if (out_str == 'BOT_NAME:') {
 			CHAT_STATE = 'BOT_NAME';
 			LogToConsole('STDIN: '+CHAT_CONFIG.bot_name);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.bot_name+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.bot_name+ENDL);
 		} else if (out_str == 'NEW_PROMPT:') {
 			CHAT_STATE = 'NEW_PROMPT';
 			LogToConsole('STDIN: '+INIT_PROMPT);
-			AI_ENGINE.stdin.write(INIT_PROMPT+"\r\n");	
+			AI_ENGINE.stdin.write(INIT_PROMPT+ENDL);	
 		} else if (out_str == 'START_TEXT:') {
 			CHAT_STATE = 'START_TEXT';
 			LogToConsole('STDIN: '+GEN_CONFIG.prompt_text);
-			AI_ENGINE.stdin.write(GEN_CONFIG.prompt_text+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.prompt_text+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.max_len);
-			AI_ENGINE.stdin.write(GEN_CONFIG.max_len+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.max_len+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.min_len);
-			AI_ENGINE.stdin.write(GEN_CONFIG.min_len+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.min_len+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.temp);
-			AI_ENGINE.stdin.write(GEN_CONFIG.temp+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.temp+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.top_k);
-			AI_ENGINE.stdin.write(GEN_CONFIG.top_k+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.top_k+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.top_p);
-			AI_ENGINE.stdin.write(GEN_CONFIG.top_p+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.top_p+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.typical_p);
-			AI_ENGINE.stdin.write(GEN_CONFIG.typical_p+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.typical_p+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.rep_penalty);
-			AI_ENGINE.stdin.write(GEN_CONFIG.rep_penalty+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.rep_penalty+ENDL);
 		} else if (out_str == 'IMAGE_PROMPT:') {
 			CHAT_STATE = 'IMAGE_PROMPT';
 			LogToConsole('STDIN: '+GEN_CONFIG.prompt_text);
-			AI_ENGINE.stdin.write(GEN_CONFIG.prompt_text+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.prompt_text+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.prompt_neg);
-			AI_ENGINE.stdin.write(GEN_CONFIG.prompt_neg+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.prompt_neg+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.inference_steps);
-			AI_ENGINE.stdin.write(GEN_CONFIG.inference_steps+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.inference_steps+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.guidance_scale);
-			AI_ENGINE.stdin.write(GEN_CONFIG.guidance_scale+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.guidance_scale+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.safety_check);
-			AI_ENGINE.stdin.write(GEN_CONFIG.safety_check+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.safety_check+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.image_width);
-			AI_ENGINE.stdin.write(GEN_CONFIG.image_width+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.image_width+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.image_height);
-			AI_ENGINE.stdin.write(GEN_CONFIG.image_height+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.image_height+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.vae_file);
-			AI_ENGINE.stdin.write(GEN_CONFIG.vae_file+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.vae_file+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.lora_file);
-			AI_ENGINE.stdin.write(GEN_CONFIG.lora_file+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.lora_file+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.lora_dir);
-			AI_ENGINE.stdin.write(GEN_CONFIG.lora_dir+"\r\n");
+			AI_ENGINE.stdin.write(GEN_CONFIG.lora_dir+ENDL);
 		} else if (out_str == 'AVATAR_IMG:') {
 			CHAT_STATE = 'AVATAR_IMG';
 			LogToConsole('STDIN: '+APP_CONFIG.avatar_img);
-			AI_ENGINE.stdin.write(APP_CONFIG.avatar_img+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.avatar_img+ENDL);
 		} else if (out_str == 'TALK_MODE:') {
 			CHAT_STATE = 'TALK_MODE';
 			LogToConsole('STDIN: '+CHAT_CONFIG.talk_mode);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.talk_mode+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.talk_mode+ENDL);
 		} else if (out_str == 'CLONE_CONFIG:') {
 			CHAT_STATE = 'CLONE_CONFIG';
+			LogToConsole('STDIN: '+CLONE_MODEL);
+			AI_ENGINE.stdin.write(CLONE_MODEL+ENDL);
 			LogToConsole('STDIN: '+CLONE_NAME);
-			AI_ENGINE.stdin.write(CLONE_NAME+"\r\n");
+			AI_ENGINE.stdin.write(CLONE_NAME+ENDL);
 			LogToConsole('STDIN: '+CLONE_SAMPLE);
-			AI_ENGINE.stdin.write(CLONE_SAMPLE+"\r\n");
+			AI_ENGINE.stdin.write(CLONE_SAMPLE+ENDL);
+			LogToConsole('STDIN: '+CLONE_TEXT);
+			AI_ENGINE.stdin.write(CLONE_TEXT+ENDL);
 		} else if (out_str == 'VOICE_CONFIG:') {
 			CHAT_STATE = 'VOICE_CONFIG';
 			LogToConsole('STDIN: '+CHAT_CONFIG.bot_voice);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.bot_voice+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.bot_voice+ENDL);
 			LogToConsole('STDIN: '+CHAT_CONFIG.speech_vol);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.speech_vol+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.speech_vol+ENDL);
 			LogToConsole('STDIN: '+CHAT_CONFIG.speech_rate);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.speech_rate+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.speech_rate+ENDL);
 			LogToConsole('STDIN: '+CHAT_CONFIG.pitch_shift);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.pitch_shift+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.pitch_shift+ENDL);
 			LogToConsole('STDIN: '+CHAT_CONFIG.talk_mode);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.talk_mode+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.talk_mode+ENDL);
 			LogToConsole('STDIN: '+CHAT_CONFIG.tts_mode);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.tts_mode+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.tts_mode+ENDL);
 			LogToConsole('STDIN: '+CHAT_CONFIG.anim_mode);
-			AI_ENGINE.stdin.write(CHAT_CONFIG.anim_mode+"\r\n");
+			AI_ENGINE.stdin.write(CHAT_CONFIG.anim_mode+ENDL);
 		} else if (out_str == 'AI_CONFIG:') {
 			CHAT_STATE = 'AI_CONFIG';
 			LogToConsole('STDIN: '+AI_CONFIG.msg_mem);
-			AI_ENGINE.stdin.write(AI_CONFIG.msg_mem+"\r\n");
+			AI_ENGINE.stdin.write(AI_CONFIG.msg_mem+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.max_res);
-			AI_ENGINE.stdin.write(AI_CONFIG.max_res+"\r\n");
+			AI_ENGINE.stdin.write(AI_CONFIG.max_res+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.min_res);
-			AI_ENGINE.stdin.write(AI_CONFIG.min_res+"\r\n");
+			AI_ENGINE.stdin.write(AI_CONFIG.min_res+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.base_temp);
-			AI_ENGINE.stdin.write(AI_CONFIG.base_temp+"\r\n");
+			AI_ENGINE.stdin.write(AI_CONFIG.base_temp+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.prompt_p);
-			AI_ENGINE.stdin.write(AI_CONFIG.prompt_p+"\r\n");
+			AI_ENGINE.stdin.write(AI_CONFIG.prompt_p+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.top_k);
-			AI_ENGINE.stdin.write(AI_CONFIG.top_k+"\r\n");
+			AI_ENGINE.stdin.write(AI_CONFIG.top_k+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.top_p);
-			AI_ENGINE.stdin.write(AI_CONFIG.top_p+"\r\n");
+			AI_ENGINE.stdin.write(AI_CONFIG.top_p+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.typical_p);
-			AI_ENGINE.stdin.write(AI_CONFIG.typical_p+"\r\n");
+			AI_ENGINE.stdin.write(AI_CONFIG.typical_p+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.rep_penalty);
-			AI_ENGINE.stdin.write(AI_CONFIG.rep_penalty+"\r\n");
+			AI_ENGINE.stdin.write(AI_CONFIG.rep_penalty+ENDL);
 		} else if (out_str == 'APP_CONFIG:') {
 			CHAT_STATE = 'APP_CONFIG';
 			LogToConsole('STDIN: '+APP_CONFIG.script_dir);
-			AI_ENGINE.stdin.write(APP_CONFIG.script_dir+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.script_dir+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.model_dir);
-			AI_ENGINE.stdin.write(APP_CONFIG.model_dir+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.model_dir+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.sd_model);
-			AI_ENGINE.stdin.write(APP_CONFIG.sd_model+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.sd_model+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.tts_model);
-			AI_ENGINE.stdin.write(APP_CONFIG.tts_model+"\r\n");
-			LogToConsole('STDIN: '+APP_CONFIG.voc_model);
-			AI_ENGINE.stdin.write(APP_CONFIG.voc_model+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.tts_model+ENDL);
+			LogToConsole('STDIN: '+APP_CONFIG.sr_model);
+			AI_ENGINE.stdin.write(APP_CONFIG.sr_model+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.model_type);
-			AI_ENGINE.stdin.write(APP_CONFIG.model_type+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.model_type+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.imodel_type);
-			AI_ENGINE.stdin.write(APP_CONFIG.imodel_type+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.imodel_type+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.smodel_type);
-			AI_ENGINE.stdin.write(APP_CONFIG.smodel_type+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.smodel_type+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.model_args);
-			AI_ENGINE.stdin.write(APP_CONFIG.model_args+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.model_args+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.comp_dev);
-			AI_ENGINE.stdin.write(APP_CONFIG.comp_dev+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.comp_dev+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.start_meth);
-			AI_ENGINE.stdin.write(APP_CONFIG.start_meth+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.start_meth+ENDL);
+			LogToConsole('STDIN: '+APP_CONFIG.enable_bbcode);
+			AI_ENGINE.stdin.write(APP_CONFIG.enable_bbcode+ENDL);
+			LogToConsole('STDIN: '+APP_CONFIG.enable_tooluse);
+			AI_ENGINE.stdin.write(APP_CONFIG.enable_tooluse+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.avatar_img);
-			AI_ENGINE.stdin.write(APP_CONFIG.avatar_img+"\r\n");
+			AI_ENGINE.stdin.write(APP_CONFIG.avatar_img+ENDL);
 		} else if (out_str.startsWith('PLAY_SPEECH:')) {
-			const audio_file = out_str.replace('PLAY_SPEECH:','').trim();
 			CHAT_STATE = 'PLAY_SPEECH';
-			CB_FUNCS.play_audio(audio_file);
+			CB_FUNCS.play_audio(out_str.replace('PLAY_SPEECH:','').trim());
 		} else if (out_str.startsWith('INIT_DONE:')) {
 			CHAT_STATE = 'INIT_DONE';
 			CB_FUNCS.ai_ready('AI_UI_DEFAULT');
 		} else if (out_str.startsWith('CLEAR_DONE:')) {
 			CHAT_STATE = 'CLEAR_DONE';
 			CB_FUNCS.ai_ready(out_str.replace('CLEAR_DONE:', ''));
-		} else if (out_str.startsWith('SYS_VOICES:') || out_str.startsWith('T5_VOICES:')) {
-			let voice_mode = out_str.startsWith('SYS_VOICES:') ? 'SYS' : 'T5';
+		} else if (out_str.startsWith('TOOL_FUNCS:')) {
+			CHAT_STATE = 'TOOL_FUNCS';
+			CB_FUNCS.got_tools(out_str.replace('TOOL_FUNCS:',''));
+		} else if (out_str.startsWith('CHAT_FILES:')) {
+			CHAT_STATE = 'CHAT_FILES';
+			const files_str = CHAT_FILES.join("[AI_UI_BR]");
+			LogToConsole('STDIN: '+files_str);
+			AI_ENGINE.stdin.write(files_str+ENDL);
+		} else if (out_str.startsWith('SYS_VOICES:') || out_str.startsWith('AI_VOICES:')) {
+			let voice_mode = out_str.startsWith('SYS_VOICES:') ? 'SYS' : 'AI';
 			let do_set = (TTS_MODES[CHAT_CONFIG.tts_mode] == voice_mode);
 			if (do_set) CB_FUNCS.clear_voices();
 			let voice_list = out_str.replace(voice_mode+'_VOICES:','');
@@ -498,8 +548,10 @@ function StartScript() {
 			for (let i=0; i<voices.length; i++) {
 				const voice = voices[i].trim().replace('VOICE_NAME:','').split('VOICE_ID:');
 				if (voice.length != 2) continue;
-				if (voice[0].endsWith('.npy')) {
+				if (voice[0].endsWith('.npy') || voice[0].endsWith('.txt')) {
 					voice_names.push(voice[0].substring(0, voice[0].length-4));
+				} else if (voice[0].endsWith('.pt')) {
+					voice_names.push(voice[0].substring(0, voice[0].length-3));
 				} else {
 					voice_names.push(voice[0]);
 				}
@@ -533,6 +585,7 @@ module.exports = {
 	startScript: StartScript,
 	stopScript: StopScript,
 	sendMsg: SendMsg,
+	setPlatform: SetPlatform,
 	setCallbacks: SetCallbacks,
 	setUsernames: SetUsernames,
 	setPrompt: SetPrompt,
@@ -540,12 +593,14 @@ module.exports = {
 	configSpeech: ConfigSpeech,
 	configAI: ConfigAI,
 	configApp: ConfigApp,
+	configOther: ConfigOther,
 	configGen: ConfigGen,
 	getConfigs: GetConfigs,
 	setConfigs: SetConfigs,
 	setAvatar: SetAvatar,
 	setTalkMode: SetTalkMode,
 	setReadText: SetReadText,
+	setChatFiles: SetChatFiles,
 	setCloneVoice: SetCloneVoice,
 	engineRunning: EngineRunning,
 	runCommand: RunCommand

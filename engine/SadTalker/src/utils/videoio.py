@@ -3,7 +3,7 @@ import uuid
 import os
 import cv2
 
-from moviepy.editor import VideoFileClip, AudioFileClip
+from moviepy import VideoFileClip, AudioFileClip, CompositeAudioClip
 
 def load_video_to_cv2(input_path):
     video_stream = cv2.VideoCapture(input_path)
@@ -22,5 +22,5 @@ def save_video_with_watermark(video, audio, save_path, watermark=False):
 		video_clip = VideoFileClip(video)
 		audio_clip = AudioFileClip(audio)
 		
-		final_clip = video_clip.set_audio(audio_clip)
-		final_clip.write_videofile(save_path)
+		video_clip.audio = CompositeAudioClip([audio_clip])
+		video_clip.write_videofile(save_path)

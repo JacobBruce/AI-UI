@@ -1,30 +1,55 @@
 window.$ = window.jQuery = require('jquery');
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, webUtils } = require('electron');
+const hljs = require('highlight.js');
 
 const pedit_img_html = '<button id="edit_btn" onclick="ToggleEditPrompt()"><img class="edit_img" src="./img/edit_w.png" width="15" /></button>';
 const default_ip = "Chat log between HUMAN_NAME and BOT_NAME on DATE";
 const pygmalion_ip = "BOT_NAME's Persona: A helpful AI assistant who can use the [AI_IMG] tag to generate images from a description.\n<START>\nHUMAN_NAME: show me an image of a cyberpunk cityscape\nBOT_NAME: [AI_IMG]cyberpunk cityscape[/AI_IMG]";
-const bbcode_ip = "Use the [CODE] tag to post a code snippet. Example: [CODE]int abc = 123;[/CODE]\nUse the [AI_IMG] tag to generate an image from a description using AI. Example: [AI_IMG]cute kitten[/AI_IMG]";
-var ip_vals = { chat:'', pygmalion:'', bbcode:'' };
+const thinking_ip = "You are a helpful AI assistant who can think step by step before answering questions. You can put your thoughts inside the <thoughts> and </thoughts> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden and separated from your actual responses.";
+const bbcode_ip = "You can use BBCode tags to format text and embed media such as images and videos into your messages.\nUse [b], [i], [u], and [s] to make text bold, italic, underlined, or striked-through. Example: [b]this is bold text[/b]\nUse [h1], [h2], [h3], [h4], [h5], and [h6] for headings. Example: [h3]this is a heading[/h3]\nUse the [hr] tag to insert a horizontal rule. Example: this is above the line[hr]this is below\nUse the [center] tag to horizontally center text and other content. Example [center]this is centered text[/center]\nUse the [quote] tag for quoting text. Example: [quote]this is a quote[/quote]\nUse the [spoiler] tag for hiding spoiler text and other content. Example: [spoiler]this is a spoiler[/spoiler]\nUse the [pre] tag to post preformatted text. Example: [pre]this is preformatted text[/pre]\nUse the [ol] and [ul] tags for ordered and unordered lists. Use [li] or [*] for list items. Example: [ol][*]item1[*]item2[/ol]\nUse the [url] tag to post a link. Example: [url=http://test.com]this is a link[/url]\nUse the [code] tag to post a code snippet. Example: [code=C++]int abc = 123;[/code]\nUse the [video] and [audio] tags to post a video or audio file. Example: [video]http://test.com/vid.mp4[/video]\nUse the [youtube] tag to post a youtube video with just the video ID. Example: [youtube]5eqRuVp65eY[/youtube]\nUse the [img] tag to post an image. Example: [img]http://test.com/pic.png[/img]\nUse the [ai_img] tag to generate an image from a description using AI. Example: [ai_img]cute kitten[/ai_img]";
+var tooluse_ip = "You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools:\n<tools>{tool_funcs}</tools>\n\nFor each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>";
+var tooluse2_ip = "You are an expert in composing functions. You are given a question and a set of possible functions. Based on the question, you will need to make one or more function/tool calls to achieve the purpose. If none of the function can be used, point it out. If the given question lacks the parameters required by the function, also point it out.\n\nIf you decide to invoke any of the function(s), you MUST put it in this format:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>\n\nHere is a list of functions in JSON format that you can invoke:\n{tool_funcs}";
+var ip_vals = { chat:'', pygmalion:'', think:'', tools:'', tools2:'', bbcode:'' };
+
+const bb_code_tags = [
+	"B", "b", "I", "i", "U", "u", "S", "s", "OL", "ol", "UL", "ul", "LI", "li", "IMG", "img", "PRE", "pre", 
+	"H1", "h1", "H2", "h2", "H3", "h3", "H4", "h4", "H5", "h5", "H6", "h6", "URL", "url", "CODE", "code", 
+	"CENTER", "center", "SPOILER", "spoiler", "QUOTE", "quote", "AUDIO", "audio", "VIDEO", "video", "YOUTUBE", "youtube"
+];
+
+const bb_data_tags = ["URL", "url", "CODE", "code", "QUOTE", "quote", "SPOILER", "spoiler"];
+
+const alpha_num_regex = /^[a-z0-9]+$/i;
+var held_keys = [null,null,null];
 
 var avatar_vid = null;
 var speech_audio = null;
+var audio_context = null;
+var microphone_stream = null;
+var audio_processor_node = null;
 var loop_timer = null;
 var dot_count = 0;
 var rnd_int = 0;
 var active_dl = 0;
 var total_dls = 0;
 var cmd_index = 0;
+var max_ip_len = 256;
+var last_gen_mode = 0;
+var last_gen_voice = 0;
 var btn_state = true;
+var recording = false;
 var thinking = false;
 var generating = false;
+var asr_pending = false;
 var chat_exp = false;
 var gen_exp = false;
 var tts_exp = false;
 var adv_show = false;
 var sys_voices = [];
-var t5_voices = [];
+var ai_voices = [];
 var cmd_list = [];
+var attachments = [];
+var tool_funcs = '';
 var think_targ = '';
 var prompt = '';
 
@@ -57,13 +82,19 @@ var start_meth = 'text';
 var script_dir = '';
 var model_args = ''
 var model_dir = '';
-var sd_model = '';
-var sd_model = '';
+var im_model = '';
 var tts_model = '';
-var voc_model = '';
+var sr_model = '';
 var python_bin = '';
 var avatar_mp4 = '';
 var avatar_img = '';
+
+var enable_bbcode = 1;
+var enable_tooluse = 1;
+var enable_devmode = 0;
+var enable_asasro = 0;
+var start_rec_keys = '';
+var stop_rec_keys = '';
 
 function RandInt(max_val=9999999) {
 	let rnd = Math.floor(Math.random() * max_val);
@@ -109,6 +140,117 @@ function ToggleAudio() {
 	}
 }
 
+function FloatTo16BitPCM(output, offset, input) {
+	for (let i = 0; i < input.length; i++, offset+=2){
+		let s = Math.max(-1, Math.min(1, input[i]));
+		output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+	}
+}
+
+function WriteString(view, offset, string) {
+	for (let i = 0; i < string.length; i++) {
+		view.setUint8(offset + i, string.charCodeAt(i));
+	}
+}
+
+function EncodeWAV(samples) {
+	let buffer = new ArrayBuffer(44 + samples.length * 2);
+	let view = new DataView(buffer);
+
+	/* RIFF identifier */
+	WriteString(view, 0, 'RIFF');
+	/* file length */
+	view.setUint32(4, 36 + samples.length * 2, true);
+	/* RIFF type */
+	WriteString(view, 8, 'WAVE');
+	/* format chunk identifier */
+	WriteString(view, 12, 'fmt ');
+	/* format chunk length */
+	view.setUint32(16, 16, true);
+	/* sample format (raw) */
+	view.setUint16(20, 1, true);
+	/* channel count */
+	view.setUint16(22, 1, true);
+	/* sample rate */
+	view.setUint32(24, audio_context.sampleRate, true);
+	/* byte rate (sample rate * block align) */
+	view.setUint32(28, audio_context.sampleRate * 2, true);
+	/* block align (channel count * bytes per sample) */
+	view.setUint16(32, 2, true);
+	/* bits per sample */
+	view.setUint16(34, 16, true);
+	/* data chunk identifier */
+	WriteString(view, 36, 'data');
+	/* data chunk length */
+	view.setUint32(40, samples.length * 2, true);
+
+	FloatTo16BitPCM(view, 44, samples);
+
+	return view;
+}
+
+function StartMicrophone() {
+	audio_context = new AudioContext();
+
+	navigator.mediaDevices.getUserMedia({audio:true, video:false}).then((stream) => {
+		StartRecording(stream);
+	}).catch((err) => {
+		ipcRenderer.send('show-alert', { type: "error", msg: 'Failed to get microphone audio stream.' });
+	});
+}
+
+function SaveRecording(sample_buff) {
+	recording = false;
+	$('#loading_msg').html('Running speech recognition model ...');
+	if (sample_buff.length > 0) {
+		let dataView = EncodeWAV(sample_buff);
+		ipcRenderer.send('save-recording', dataView);
+	} else {
+		$('#loading_box').hide();
+	}
+}
+
+function StopRecording() {
+	if (audio_processor_node !== null && recording)
+		audio_processor_node.port.postMessage({msg:"stop"});
+	recording = false;
+}
+
+function InitAudioProcessor() {
+	audio_processor_node = new AudioWorkletNode(audio_context, 'worklet-processor', {});
+	microphone_stream.connect(audio_processor_node);
+	
+	audio_processor_node.port.onmessage = (e) => {
+		if (e.data.msg == "anim") {
+			const circleRad = Math.min(5.0, e.data.sample * 10.0) + 3.0;
+			$('#rec_circle').attr("r", Math.round(circleRad));
+		} else if (e.data.msg == "stop") {
+			SaveRecording(e.data.buffer);
+		} else if (e.data.msg == "start") {
+			$('#loading_msg').html('<svg id="rec_svg"><circle id="rec_circle" r="3" /></svg> Recording. Stop speaking for a few seconds to end recording.');
+		}
+	};
+}
+
+function StartRecording(stream=null) {
+	recording = true;
+	if (stream !== null) {
+		microphone_stream = audio_context.createMediaStreamSource(stream);
+
+		audio_context.audioWorklet.addModule('./abp.js').then(() => {
+			InitAudioProcessor();
+		}).catch((err) => {
+			recording = false;
+			$('#loading_box').hide();
+			ipcRenderer.send('show-alert', { type: "error", msg: 'Failed to start recording.' });
+		});
+	} else {
+		InitAudioProcessor();
+	}
+	$('#loading_msg').html('Speak into your microphone to begin recording.');
+	$('#loading_box').show();
+}
+
 function EncodeHTML(txt) {
 	return txt.replaceAll('&', '&amp;').
 		replaceAll('<', '&lt;').
@@ -120,28 +262,118 @@ function EncodeHTML(txt) {
 		replaceAll('\t', '&nbsp;&nbsp;');
 }
 
-function ConvertAIBB(txt) {
-	return txt.replaceAll("[AI_UI_BR]", "<br>").replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_LF]", "\n").
-		replaceAll("[CODE START]", '</p><pre class="code_box">').replaceAll("[CODE END]", '</pre><p class="msg_p">').
-		replaceAll("[AI_IMG NUM_", '</p><img class="chat_img" src="file://'+script_dir+'/ai_images/image_').
-		replaceAll("_CHAT_IMG]", '.png" title="').replaceAll("[AI_IMG END]", '" onclick="ShowInFolder(this)"><p class="msg_p">');
+function EncodeAIXML(txt) {
+	return txt.replaceAll('<thoughts>', '[AIUI_THOUGHTS]').replaceAll('</thoughts>', '[AIUI_THOUGHTS END]');
 }
 
 function ConvertBB(txt) {
-	return txt.replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_LF]", "\n").
-		replaceAll('[CODE START]', '</p><pre class="code_box">').replaceAll('[CODE END]', '</pre><p class="msg_p">');
+	return txt.replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_BR]", "<br>").
+		replaceAll('[HR]', '</p><hr class="chat_hr"><p class="msg_p">').
+		replaceAll('[B]', '<b>').replaceAll('[B END]', '</b>').
+		replaceAll('[I]', '<i>').replaceAll('[I END]', '</i>').
+		replaceAll('[U]', '<u>').replaceAll('[U END]', '</u>').
+		replaceAll('[S]', '<s>').replaceAll('[S END]', '</s>').
+		replaceAll("[H1]", '</p><h1>').replaceAll('[H1 END]', '</h1><p class="msg_p">').
+		replaceAll("[H2]", '</p><h2>').replaceAll('[H2 END]', '</h2><p class="msg_p">').
+		replaceAll("[H3]", '</p><h3>').replaceAll('[H3 END]', '</h3><p class="msg_p">').
+		replaceAll("[H4]", '</p><h4>').replaceAll('[H4 END]', '</h4><p class="msg_p">').
+		replaceAll("[H5]", '</p><h5>').replaceAll('[H5 END]', '</h5><p class="msg_p">').
+		replaceAll("[H6]", '</p><h6>').replaceAll('[H6 END]', '</h6><p class="msg_p">').
+		replaceAll("[OL]", '</p><ol>').replaceAll('[OL END]', '</ol><p class="msg_p">').
+		replaceAll("[UL]", '</p><ul>').replaceAll('[UL END]', '</ul><p class="msg_p">').
+		replaceAll("[LI]", '<li>').replaceAll('[LI END]', '</li>').
+		replaceAll('[PRE]', '</p><pre>').replaceAll('[PRE END]', '</pre><p class="msg_p">').
+		replaceAll('[QUOTE]', '</p><blockquote>').replaceAll('[QUOTE END]', '</blockquote><p class="msg_p">').
+		replaceAll('[SPOILER]', '</p><details><summary onclick="ToggleDetails(this)">click to show spoiler</summary><hr class="chat_hr">').
+		replaceAll('[SPOILER=', '</p><details><summary onclick="ToggleDetails(this)">').replaceAll('_SPOILER]', '</summary><hr class="chat_hr">').
+		replaceAll('[SPOILER END]', '</details><p class="msg_p">').
+		replaceAll('[CENTER]', '</p><center>').replaceAll('[CENTER END]', '</center><p class="msg_p">').
+		replaceAll("[IMG]", '</p><img class="chat_img" src="').replaceAll('[IMG END]', '" onclick="ShowImage(this)"><p class="msg_p">').
+		replaceAll('[CODE]', '</p><pre class="code_box"><code>').replaceAll('[CODE END]', '</code></pre><p class="msg_p">').
+		replaceAll('[CODE=', '</p><pre class="code_box"><code class="language-').replaceAll('_CODE]', '">').
+		replaceAll('[URL=', '<a href="').replaceAll('_URL]', '" target="_blank">').replaceAll('[URL END]', '</a>').
+		replaceAll('[VIDEO=', '</p><video class="chat_vid" controls><source type="video/').replaceAll('_VIDEO]', '" src="').
+		replaceAll('[AUDIO=', '</p><audio class="chat_aud" controls><source type="audio/').replaceAll('_AUDIO]', '" src="').
+		replaceAll('[VIDEO END]', '"></video><p class="msg_p">').replaceAll('[AUDIO END]', '"></audio><p class="msg_p">').
+		replaceAll('[YOUTUBE]', '</p><iframe class="yt_vid" src="https://www.youtube.com/embed/').replaceAll('[YOUTUBE END]', '"></iframe><p class="msg_p">');
+}
+
+function ConvertAIBB(txt) {
+	let result = txt.replaceAll('[AIUI_THOUGHTS]', '</p><details><summary onclick="ToggleDetails(this)">click to show AI thoughts</summary><hr class="chat_hr">').
+		replaceAll('[AIUI_THOUGHTS END]', '</details><p class="msg_p">');
+	if (enable_bbcode == 1) {
+		result = ConvertBB(result).replaceAll("[AI_IMG NUM_", '</p><img class="chat_img" src="file://'+script_dir+'/ai_images/image_').
+		replaceAll("_CHAT_IMG]", '.png" title="').replaceAll("[AI_IMG END]", '" onclick="ShowInFolder(this)"><p class="msg_p">');
+	}
+	return result;
 }
 
 function EncodeBB(bbcode) {
-	let result = bbcode;
-	while (result.includes('[CODE]') && result.includes('[/CODE]')) {
-		const tag_start = result.indexOf("[CODE]") + 6;
-		const tag_end = result.indexOf("[/CODE]");
-		if (tag_start >= tag_end) break;
-		const code_txt = result.substring(tag_start, tag_end);
-		const code_enc = code_txt.replaceAll("\t", "[AI_UI_TAB]").replaceAll("\n", "[AI_UI_LF]");
-		result = result.replace('[CODE]'+code_txt+'[/CODE]', '[CODE START]'+code_enc+'[CODE END]');
+	let result = bbcode.replaceAll("[hr]", "[HR]");
+	
+	for (let i=0; i < bb_code_tags.length; ++i)
+	{
+		const bbc_tag = bb_code_tags[i];
+		const bbc_open_tag = "[" + bbc_tag + "]";
+		const bbc_close_tag = "[/" + bbc_tag + "]";
+		const bbc_upper_tag = bbc_tag.toUpperCase();
+		
+		while (result.includes(bbc_open_tag) && result.includes(bbc_close_tag)) {
+			const tag_start = result.indexOf(bbc_open_tag) + bbc_open_tag.length;
+			const tag_end = result.indexOf(bbc_close_tag);
+			if (tag_start >= tag_end) break;
+			const inner_txt = result.substring(tag_start, tag_end);
+			let inner_enc = inner_txt.replaceAll("\t", "[AI_UI_TAB]").replaceAll("\n", "[AI_UI_BR]");
+			if (bbc_upper_tag == "OL" || bbc_upper_tag == "UL") inner_enc = inner_enc.replaceAll("[*]", "[LI]");
+			if (bbc_upper_tag == "URL") {
+				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"="+inner_txt+"_"+bbc_upper_tag+"]"+inner_enc+"["+bbc_upper_tag+" END]");
+			} else if (bbc_upper_tag == "VIDEO") {
+				const vid_link = inner_txt.toLowerCase().trim();
+				let tag_data = "mp4";
+				if (vid_link.endsWith("webm")) {
+					tag_data = "webm";
+				} else if (vid_link.endsWith("ogg")) {
+					tag_data = "ogg";
+				}
+				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"="+tag_data+"_"+bbc_upper_tag+"]"+inner_enc+"["+bbc_upper_tag+" END]");
+			} else if (bbc_upper_tag == "AUDIO") {
+				const aud_link = inner_txt.toLowerCase().trim();
+				let tag_data = "mp3";
+				if (aud_link.endsWith("wav")) {
+					tag_data = "wav";
+				} else if (aud_link.endsWith("ogg")) {
+					tag_data = "ogg";
+				}
+				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"="+tag_data+"_"+bbc_upper_tag+"]"+inner_enc+"["+bbc_upper_tag+" END]");
+			} else {
+				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"]"+inner_enc+"["+bbc_upper_tag+" END]");
+			}
+		}
 	}
+	
+	for (let i=0; i < bb_data_tags.length; ++i)
+	{
+		const bbc_tag = bb_data_tags[i];
+		const bbc_data_tag = "[" + bbc_tag + "=";
+		const bbc_close_tag = "[/" + bbc_tag + "]";
+		const bbc_upper_tag = bbc_tag.toUpperCase();
+		
+		while (result.includes(bbc_data_tag) && result.includes(bbc_close_tag)) {
+			const data_start = result.indexOf(bbc_data_tag) + bbc_data_tag.length;
+			const tag_start = data_start + result.substring(data_start).indexOf(']');
+			const tag_data = result.substring(data_start, tag_start);
+			const tag_end = result.indexOf(bbc_close_tag);
+			if (tag_start+1 >= tag_end) break;
+			const inner_txt = result.substring(tag_start+1, tag_end);
+			if (bbc_upper_tag == "QUOTE") {
+				result = result.replace(bbc_data_tag+tag_data+"]"+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"]"+inner_txt+"[AI_UI_BR]\t- "+tag_data+"["+bbc_upper_tag+" END]");
+			} else {
+				result = result.replace(bbc_data_tag+tag_data+"]"+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"="+tag_data+"_"+bbc_upper_tag+"]"+inner_txt+"["+bbc_upper_tag+" END]");
+			}
+			break;
+		}
+	}
+	
 	return result;
 }
 
@@ -296,19 +528,29 @@ function DisableButtons(bool_val, load_state=false) {
 		btn_state = bool_val;
 	}
 	DisExtraButtons(new_state);
+	$('#send_btn').prop('disabled', bool_val);
 	$('#apply_btn').prop('disabled', bool_val);
 	$('#gen_btn').prop('disabled', bool_val);
 	$('#tts_btn').prop('disabled', bool_val);
+	$('#read_txt_btn').prop('disabled', bool_val);
 	$('#clone_voice_btn').prop('disabled', bool_val);
 	$('#img_btn').prop('disabled', bool_val);
 	$('#edit_btn').prop('disabled', bool_val);
+	$('#attach_btn').prop('disabled', bool_val);
+	$('#mic_btn').prop('disabled', bool_val);
 	$('.config_btn').prop('disabled', bool_val);
 }
 
 ipcRenderer.on('bot-msg', (event, payload) => {
-	const bot_msg = ConvertAIBB(EncodeHTML(payload.msg.trim()));
+	let bot_msg = payload.msg.trim();
+	if (enable_bbcode == 0) {
+		bot_msg = ConvertAIBB(EncodeHTML(EncodeAIXML(bot_msg)));
+	} else {
+		bot_msg = ConvertAIBB(EncodeHTML(EncodeAIXML(EncodeBB(bot_msg))));
+	}
 	const msg_html = '<div class="bmsg_box"><div class="bot_msg"><p class="msg_p">'+bot_msg+'</p></div></div>';
-	$('#chat_log').append(msg_html.replaceAll('<p class="msg_p"></p>', ''));
+	$('#chat_log').append(msg_html.replaceAll('<p class="msg_p"></p>', '').replaceAll('<p class="msg_p"><br>', '<p class="msg_p">'));
+	$("#chat_log div.bmsg_box").last().find("pre.code_box code").each(function () { hljs.highlightElement(this) });
 	$('.msg_pad').remove();
 	DisableButtons(false);
 	StopThinking();
@@ -319,27 +561,68 @@ ipcRenderer.on('bot-msg', (event, payload) => {
 });
 
 function SendMsg() {
-	if (thinking || generating) return;//TODO: remove this for multi msg from user
+	if (thinking || generating) return;
 	if ($('#send_btn').prop('disabled')) return;
+	let messages = [];
 	let message = '';
 	let html_msg = '';
+	let send_delay = 0;
 	if (chat_exp) {
 		message = $('#area_inp').val().trim();
-		html_msg = ConvertBB(EncodeHTML(EncodeBB(message)).replaceAll("\n", "<br>"));
-		message = message.replaceAll("\n", "[AI_UI_BR]");
 		$('#area_inp').val('');
 	} else {
 		message = $('#text_inp').val().trim();
-		html_msg = ConvertBB(EncodeHTML(EncodeBB(message)));
 		$('#text_inp').val('');
 	}
 	if (message == '') return;
-	html_msg = '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+html_msg+'</p></div></div>';
-	$('#chat_log').append(html_msg.replaceAll('<p class="msg_p"></p>', ''));
+	messages = message.split('[AIUI_END]');
+	message = message.replaceAll("\n", "[AI_UI_BR]");
+	for (let i=0; i<messages.length; ++i) {
+		let msg = messages[i].trim();
+		if (msg == '') continue;
+		if (chat_exp) {
+			if (enable_bbcode == 0) {
+				html_msg += '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+
+							EncodeHTML(msg).replaceAll("\n", "<br>")+'</p>';
+			} else {
+				html_msg += '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+
+							ConvertBB(EncodeHTML(EncodeBB(msg)).replaceAll("\n", "<br>"))+'</p>';
+			}
+		} else {
+			if (enable_bbcode == 0) {
+				html_msg += '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+
+							EncodeHTML(msg)+'</p>';
+			} else {
+				html_msg += '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+
+							ConvertBB(EncodeHTML(EncodeBB(msg)))+'</p>';
+			}
+		}
+	}
+	html_msg = html_msg.replaceAll('<p class="msg_p"></p>', '').replaceAll('<p class="msg_p"><br>', '<p class="msg_p">');
+	if (html_msg == '') return;
+	if (!$('#attach_dialog').is(":hidden")) {
+		ToggleAttachBox();
+		if (attachments.length > 0) send_delay = 500;
+	}
+	if ($("#am_select").find(':selected').val() != "rag") {
+		if (attachments.length > 0)
+			html_msg += '<h5 class="files_head">ATTACHMENTS:</h5>';
+		for (let i=0; i < attachments.length; ++i)
+			html_msg += '<div class="msg_file"><small>📎 ' + EncodeHTML(attachments[i]) + '</small></div>';
+		ClearAttachments();
+	}
+	$('#chat_log').append(html_msg+'</div></div>');
+	$("#chat_log div.umsg_box").each(function () {
+		$(this).find("pre.code_box code").each(function () {
+			if ($(this).attr("data-highlighted") != "yes") hljs.highlightElement(this);
+		});
+	});
 	$('#edit_dialog').hide();
-	ipcRenderer.send('send-msg', { msg: message });
-	DisableButtons(true);
-	StartThinking();
+	setTimeout(function () {
+		DisableButtons(true);
+		StartThinking();
+		ipcRenderer.send('send-msg', { msg: message });
+	}, send_delay);
 }
 
 function RedoLast() {
@@ -359,7 +642,7 @@ function ContChat() {
 }
 
 function ClearChat() {
-	btn_state = true;
+	btn_state = false;
 	DisExtraButtons(true);
 	$('#chat_log').html('');
 	ipcRenderer.send('send-msg', { msg: 'clear_chat' });
@@ -367,15 +650,104 @@ function ClearChat() {
 
 function ToggleMsgBox() {
 	if (chat_exp) {
-		$('#area_inp').hide();
+		$('#exp_box').hide();
 		$('#text_inp').prop('disabled', false);
 		$('#text_inp').focus();
 	} else {
-		$('#area_inp').show();
+		$('#exp_box').show();
 		$('#text_inp').prop('disabled', true);
 		$('#area_inp').focus();
 	}
 	chat_exp = !chat_exp;
+}
+
+function ToggleDetails(elem) {
+	let summary = $(elem).html();
+	if (summary.includes("show")) {
+		$(elem).html(summary.replace("show", "hide"));
+	} else {
+		$(elem).html(summary.replace("hide", "show"));
+	}
+}
+
+function ToggleRecordBox() {
+	if ($('#mic_btn').prop('disabled')) return;
+	if (audio_context === null) {
+		StartMicrophone();
+	} else if (!recording) {
+		StartRecording();
+	}
+}
+
+function ToggleAttachBox() {
+	if ($('#attach_dialog').is(":hidden")) {
+		$('#attach_dialog').show();
+	} else {
+		$('#attach_dialog').hide();
+		$('#input_box').hide();
+		ipcRenderer.send('attach-files', { files: attachments, mode: $("#am_select").find(':selected').val() });
+	}
+}
+
+function RemoveFile(elem) {
+	const attachment = $(elem).parent();
+	const fpath = decodeURI(attachment.attr("data-file"));
+	attachment.remove();
+	for (let i=0; i < attachments.length; ++i)
+	{
+		if (attachments[i] == fpath) {
+			attachments.splice(i, 1);
+			break;
+		}
+	}
+}
+
+function AttachFile(file_path, is_link=false) {
+	if (file_path === null || file_path == '') return;
+	if (attachments.includes(file_path)) return;
+	if (attachments.length == 0) {
+		$("#attach_box").html('');
+	}
+	attachments.push(file_path);
+	if (is_link) {
+		$("#attach_box").append('<div data-file="'+encodeURI(file_path)+'">🔗 '+EncodeHTML(file_path)+' <span onclick="RemoveFile(this)">×</span></div>');
+	} else {
+		$("#attach_box").append('<div data-file="'+encodeURI(file_path)+'">🗎 '+EncodeHTML(file_path)+' <span onclick="RemoveFile(this)">×</span></div>');
+	}
+}
+
+function AttachFiles() {
+	$("#attach_files").click();
+}
+
+function AttachLink() {
+	if ($('#input_box').is(":hidden")) {
+		$("#input_box").show();
+	} else {
+		$("#input_box").hide();
+	}
+}
+
+function ClearAttachments() {
+	attachments = []
+	if ($('#am_select').find(':selected').val() == "multi") {
+		$("#attach_box").html('<small id="attach_ph">drag and drop files here</small>');
+	} else {
+		$("#attach_box").html('<small id="attach_ph">drag and drop text files here</small>');
+	}
+}
+
+function FileDragDrop(e) {
+	e.preventDefault();
+	const files = e.dataTransfer.files;
+	for (let i=0; i < files.length; ++i) {
+		const fpath = webUtils.getPathForFile(files[i]);
+		AttachFile(fpath);
+	}
+}
+
+function FileDragOver(e) {
+	e.preventDefault();
 }
 
 // ---- TEXT GEN ----
@@ -397,11 +769,11 @@ function StopGenerating(targ='.generating') {
 
 function ToggleGenBox() {
 	if (gen_exp) {
-		$('#gen_area_inp').hide();
+		$('#gen_exp_box').hide();
 		$('#gen_text_inp').prop('disabled', false);
 		$('#gen_text_inp').focus();
 	} else {
-		$('#gen_area_inp').show();
+		$('#gen_exp_box').show();
 		$('#gen_text_inp').prop('disabled', true);
 		$('#gen_area_inp').focus();
 	}
@@ -410,11 +782,11 @@ function ToggleGenBox() {
 
 function ToggleTTSBox() {
 	if (tts_exp) {
-		$('#tts_area_inp').hide();
+		$('#tts_exp_box').hide();
 		$('#tts_text_inp').prop('disabled', false);
 		$('#tts_text_inp').focus();
 	} else {
-		$('#tts_area_inp').show();
+		$('#tts_exp_box').show();
 		$('#tts_text_inp').prop('disabled', true);
 		$('#tts_area_inp').focus();
 	}
@@ -488,9 +860,22 @@ function OpenTTSDir() {
 	ShowInFolder('TTS_EMBEDS');
 }
 
+function SaveVoice() {
+	const voice_name = CleanFilename($('#voice_name').val()).replaceAll(' ', '_');
+	if (voice_name == '') {
+		ipcRenderer.send('show-alert', { msg: "A valid voice name is required!" });
+		return;
+	}
+	const src_voice = script_dir+"/embeddings/ChatTTS/random.tmp";
+	const dest_voice = script_dir+"/embeddings/ChatTTS/"+voice_name+".txt";
+	ipcRenderer.send('save-voice', { dest_file:dest_voice, src_file:src_voice });
+}
+
 function CloneVoice() {
 	if (thinking || generating) return;
 	if ($('#clone_voice_btn').prop('disabled')) return;
+	const cmodel = $('#vclone_mode').find(':selected').val();
+	const tstext = $('#transcript').val();
 	const vsample = $('#voice_sample').val();
 	const vname = CleanFilename($('#voice_name').val()).replaceAll(' ', '_');
 	if (vsample == '' || vname == '') {
@@ -499,7 +884,7 @@ function CloneVoice() {
 	}
 	DisableButtons(true, true);
 	$('#tts_result').html('Cloning voice ...');
-	ipcRenderer.send('clone-voice', { sample:vsample, name:vname });
+	ipcRenderer.send('clone-voice', { model:cmodel, sample:vsample, name:vname, transcript:tstext });
 	StartGenerating('#ttsgen_box .generating');
 }
 
@@ -507,7 +892,7 @@ ipcRenderer.on('clone-result', (event, payload) => {
 	if (!payload.voice.startsWith('ERROR:')) {
 		const voice_info = payload.voice.split(':');
 		if (voice_info.length == 2) {
-			if ($('#ttsgen_mode').find(':selected').val() == 1) $('#tts_voices').val(voice_info[1]);
+			if ($('#ttsgen_mode').find(':selected').val() > 0) $('#tts_voices').val(voice_info[1]);
 			$('#tts_result').html(EncodeHTML(voice_info[0].replaceAll('_', ' '))+' has been added to the list of voices.');
 		} else {
 			$('#tts_result').html('An unexpected error occurred.');
@@ -531,12 +916,12 @@ function GenSpeech() {
 	if (speak_txt == '') return;
 	DisableButtons(true, true);
 	$('#tts_result').html('Generating audio ...');
-	const genmode = $('#ttsgen_mode').find(':selected').val();
-	const svoice = $('#tts_voices').find(':selected').val();
+	last_gen_mode = $('#ttsgen_mode').find(':selected').val();
+	last_gen_voice = $('#tts_voices').find(':selected').val();
 	const spvol = $('#tts_speech_vol').val();
 	const srate = $('#tts_speech_rate').val();
 	const spitch = $('#tts_speech_pitch').val();
-	ipcRenderer.send('gen-speech', { tts_txt:speak_txt, voice:svoice, vol:spvol, rate:srate, pitch:spitch, engine:genmode });
+	ipcRenderer.send('gen-speech', { tts_txt:speak_txt, voice:last_gen_voice, vol:spvol, rate:srate, pitch:spitch, engine:last_gen_mode });
 	StartGenerating('#ttsgen_box .generating');
 }
 
@@ -546,12 +931,41 @@ ipcRenderer.on('tts-result', (event, payload) => {
 	} else if (payload.wav == 'NO_VOICES') {
 		$('#tts_result').html('There are no voices available for the selected speech engine.');
 	} else {
-		const wav_html = "<center><audio controls><source id='speech_wav' src='file://"+payload.wav+"?rnd="+RandInt()+"' type='audio/wav'></audio>"+
-			"<br><br><button id='wav_dir_btn' class='btn cfg_btn' onclick='OpenWavDir()'>OPEN WAV FILE</button></center>";
+		let wav_html = "<center><audio controls><source id='speech_wav' src='file://"+payload.wav+"?rnd="+RandInt()+"' type='audio/wav'></audio>"+
+			"<br><br><button id='wav_dir_btn' class='btn cfg_btn' onclick='OpenWavDir()'>OPEN WAV FILE</button>";	
+		if (smodel_type == 1 && last_gen_mode == 1 && last_gen_voice == 0) {
+			wav_html += "&nbsp;<button id='save_voice_btn' class='btn cfg_btn' onclick='SaveVoice()'>SAVE VOICE</button> "+
+				"<p><small>To save a voice you must enter a Voice Name in the Voice Cloning settings.</small></p></center>";
+		} else {
+			wav_html += "</center>";
+		}
 		$('#tts_result').html(wav_html);
 	}
 	DisableButtons(false, true);
 	StopGenerating('#ttsgen_box .generating');
+});
+
+ipcRenderer.on('asr-result', (event, payload) => {
+	let targ_input = '#text_inp';
+	$('#loading_box').hide();
+	if (payload.txt == 'ERROR') {
+		ipcRenderer.send('show-alert', { type: "error", msg: "There was an error converting the speech to text." });
+		return;
+	} else if (!$('#txtgen_app').is(':hidden')) {
+		targ_input = '#gen_text_inp';
+	} else if (!$('#ttsgen_app').is(':hidden')) {
+		targ_input = '#tts_text_inp';
+	} else if (!$('#imggen_app').is(':hidden')) {
+		targ_input = '#img_text_inp';
+	} else if (!$('#console_tab').is(':hidden')) {
+		targ_input = '#cmd_text_inp';
+	} else {
+		if (chat_exp) targ_input = '#area_inp';
+		if (enable_asasro == 1) asr_pending = true;
+	}
+	let inp_txt = $(targ_input).val().trim();
+	if (inp_txt != '') inp_txt += ' ';
+	$(targ_input).val(inp_txt+payload.txt);
 });
 
 // ---- IMAGE GEN ----
@@ -662,22 +1076,22 @@ ipcRenderer.on('init-ui', (event, payload) => {
 	if (payload.state !== false) {
 		const d = new Date();
 		const curr_date = (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
+		const def_ip = default_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
 		const pyg_ip = pygmalion_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
+		const tools_ip = tooluse_ip.replaceAll("{tool_funcs}", tool_funcs);
+		const tools2_ip = tooluse2_ip.replaceAll("{tool_funcs}", tool_funcs);
 		if (payload.state == 'AI_UI_DEFAULT') {
-			prompt = default_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
-			ip_vals = { chat:prompt, pygmalion:pyg_ip, bbcode:bbcode_ip };
+			prompt = def_ip;
 		} else {
-			prompt = payload.state;
+			prompt = payload.state.replaceAll("[AI_UI_BR]", "\n");
 		}
-		$('#prompt_txta').val(prompt);
-		$('#ip_select').val('default');
-		$('#chat_log').html('<div class="prompt"><p id="init_prompt" class="prompt_txt">'+
-			EncodeHTML(prompt)+' '+pedit_img_html+'</p></div>');
+		ip_vals = { chat:def_ip, pygmalion:pyg_ip, think:thinking_ip, tools:tools_ip, tools2:tools2_ip, bbcode:bbcode_ip };
+		RefreshPrompt(prompt);
 		$('#gen_result').html('');
 		$('#img_result').html('');
+		$('#tts_result').html('');
 	} else {
-		$('#send_btn').prop('disabled', true);
-		$('#read_txt_btn').prop('disabled', true);
+		$('#loading_box').hide();
 		DisableButtons(true);
 		StopThinking();
 		StopGenerating();
@@ -685,31 +1099,82 @@ ipcRenderer.on('init-ui', (event, payload) => {
 });
 
 ipcRenderer.on('ai-ready', (event, payload) => {
-	$('#send_btn').prop('disabled', false);
-	$('#read_txt_btn').prop('disabled', false);
+	if (asr_pending) {
+		asr_pending = false;
+		SendMsg();
+	}
 	DisableButtons(false, true);
 	StopThinking();
 	StopGenerating();
 });
 
+ipcRenderer.on('start-recording', (event, payload) => {
+	ToggleRecordBox();
+});
+
+ipcRenderer.on('stop-recording', (event, payload) => {
+	StopRecording();
+});
+
 ipcRenderer.on('add-voices', (event, payload) => {
 	let ttsgen_sel = false;
+	let ttsgen_mode = $('#ttsgen_mode').find(':selected').val()
+	
 	if (payload.mode == 'SYS') {
 		sys_voices = [];
-		if ($('#ttsgen_mode').find(':selected').val() == 0) {
+		if (ttsgen_mode == 0) {
 			$('#tts_voices').empty();
 			ttsgen_sel = true;
 		}
 	} else {
-		t5_voices = [];
-		if ($('#ttsgen_mode').find(':selected').val() == 1) {
+		ai_voices = [];
+		if (ttsgen_mode > 0) {
 			$('#tts_voices').empty();
 			ttsgen_sel = true;
 		}
 	}
 	
-	for (let i=0; i<payload.names.length; ++i) {
-		const voice_name = payload.names[i].replaceAll('_', ' ');
+	for (let i=0; i<payload.names.length; ++i)
+	{
+		let voice_name = payload.names[i];
+		if (voice_name.startsWith("af_") || voice_name.startsWith("am_") || 
+		voice_name.startsWith("bf_") || voice_name.startsWith("bm_") ||
+		voice_name.startsWith("ef_") || voice_name.startsWith("em_") ||
+		voice_name.startsWith("ff_") || voice_name.startsWith("fm_") ||
+		voice_name.startsWith("hf_") || voice_name.startsWith("hm_") ||
+		voice_name.startsWith("if_") || voice_name.startsWith("im_") ||
+		voice_name.startsWith("jf_") || voice_name.startsWith("jm_") ||
+		voice_name.startsWith("pf_") || voice_name.startsWith("pm_") ||
+		voice_name.startsWith("zf_") || voice_name.startsWith("zm_")) {
+			if (voice_name[0] == 'a') {
+				voice_name += ' (American English - ';
+			} else if (voice_name[0] == 'b') {
+				voice_name += ' (British English - ';
+			} else if (voice_name[0] == 'e') {
+				voice_name += ' (Spanish - ';
+			} else if (voice_name[0] == 'f') {
+				voice_name += ' (French - ';
+			} else if (voice_name[0] == 'h') {
+				voice_name += ' (Hindi - ';
+			} else if (voice_name[0] == 'i') {
+				voice_name += ' (Italian - ';
+			} else if (voice_name[0] == 'j') {
+				voice_name += ' (Japanese - ';
+			} else if (voice_name[0] == 'p') {
+				voice_name += ' (Brazilian Portuguese - ';
+			} else if (voice_name[0] == 'z') {
+				voice_name += ' (Mandarin Chinese - ';
+			} else {
+				voice_name += ' (Unknown - ';
+			}
+			if (voice_name[1] == 'f') {
+				voice_name += 'Female)';
+			} else {
+				voice_name += 'Male)';
+			}
+			voice_name = voice_name.substring(3);
+		}
+		voice_name = voice_name.replaceAll('_', ' ');
 		if (payload.set) {
 			let prop_str = (i == bot_voice) ? i+'" selected' : i+'"';
 			$('#voices').append('<option value="'+prop_str+'>'+voice_name+'</option>');
@@ -721,7 +1186,7 @@ ipcRenderer.on('add-voices', (event, payload) => {
 		if (payload.mode == 'SYS') {
 			sys_voices.push(voice_name);
 		} else {
-			t5_voices.push(voice_name);
+			ai_voices.push(voice_name);
 		}
 	}
 });
@@ -745,6 +1210,12 @@ ipcRenderer.on('got-avatar', (event, payload) => {
 	if (payload.got != "true") {
 		ipcRenderer.send('show-alert', { type: "error", msg: "Face animation engine cannot detect a face in the avatar image!" });
 	}
+});
+
+ipcRenderer.on('got-tools', (event, payload) => {
+	tool_funcs = payload.tools;
+	ip_vals.tools = tooluse_ip.replaceAll("{tool_funcs}", tool_funcs);
+	ip_vals.tools2 = tooluse2_ip.replaceAll("{tool_funcs}", tool_funcs);
 });
 
 ipcRenderer.on('got-file', (event, payload) => {
@@ -779,7 +1250,6 @@ ipcRenderer.on('got-models', (event, payload) => {
 	if (hideMsgBox) {
 		setTimeout(function() {
 			$('#loading_box').hide();
-			$('#loading_msg').html('Processing avatar image... please wait.');
 		}, 1500);
 	}
 });
@@ -788,6 +1258,7 @@ ipcRenderer.on('prompt-msg', (event, payload) => {
 	$('#init_prompt').html(payload.msg);
 	$('#gen_result').html(payload.msg);
 	$('#img_result').html(payload.msg);
+	$('#tts_result').html(payload.msg);
 });
 
 ipcRenderer.on('load-config', (event, payload) => {
@@ -810,15 +1281,22 @@ ipcRenderer.on('load-config', (event, payload) => {
 	script_dir = app_config.script_dir;
 	python_bin = app_config.python_bin;
 	model_dir = app_config.model_dir;
-	sd_model = app_config.sd_model;
+	im_model = app_config.sd_model;
 	tts_model = app_config.tts_model;
-	voc_model = app_config.voc_model;
+	sr_model = app_config.sr_model;
 	model_args = app_config.model_args;
 	model_type = app_config.model_type;
 	imodel_type = app_config.imodel_type;
 	smodel_type = app_config.smodel_type;
 	comp_dev = app_config.comp_dev;
 	start_meth = app_config.start_meth;
+	
+	enable_bbcode = app_config.enable_bbcode;
+	enable_tooluse = app_config.enable_tooluse;
+	enable_devmode = app_config.enable_devmode;
+	enable_asasro = app_config.enable_asasro;
+	start_rec_keys = app_config.start_rec_keys;
+	stop_rec_keys = app_config.stop_rec_keys;
 
 	max_mm = ai_config.msg_mem;
 	max_rl = ai_config.max_res;
@@ -839,6 +1317,8 @@ ipcRenderer.on('load-config', (event, payload) => {
 	} else {
 		avatar_mp4 = 'file://'+script_dir+'/SadTalker/results/face_pred_fls_speech_audio_embed.mp4';
 	}
+	
+	ipcRenderer.send('show-menubar', enable_devmode);
 
 	if (payload.skip_inputs) return;
 
@@ -855,15 +1335,22 @@ ipcRenderer.on('load-config', (event, payload) => {
 	$('#script_dir').val(script_dir);
 	$('#python_bin').val(python_bin);
 	$('#model_dir').val(model_dir);
-	$('#sd_model').val(sd_model);
+	$('#im_model').val(im_model);
 	$('#tts_model').val(tts_model);
-	$('#voc_model').val(voc_model);
+	$('#sr_model').val(sr_model);
 	$('#model_args').val(model_args);
 	$('#tmodel_select').val(model_type);
 	$('#imodel_select').val(imodel_type);
 	$('#smodel_select').val(smodel_type);
 	$('#device_select').val(comp_dev);
 	$('#startup_select').val(start_meth);
+	
+	$('#bbcode_enable').val(enable_bbcode);
+	$('#tooluse_enable').val(enable_tooluse);
+	$('#devmode_enable').val(enable_devmode);
+	$('#asasro_enable').val(enable_asasro);
+	$('#start_rec_keys').val(start_rec_keys);
+	$('#stop_rec_keys').val(stop_rec_keys);
 
 	$('#max_msg_mem').val(max_mm);
 	$('#max_res_len').val(max_rl);
@@ -909,9 +1396,9 @@ ipcRenderer.on('load-config', (event, payload) => {
 function ApplySettings() {
 	let sdir = TrimLast($('#script_dir').val().trim().replaceAll('\\', '/'), '/');
 	let mdir = TrimLast($('#model_dir').val().trim().replaceAll('\\', '/'), '/');
-	let sddir = TrimLast($('#sd_model').val().trim().replaceAll('\\', '/'), '/');
+	let imdir = TrimLast($('#im_model').val().trim().replaceAll('\\', '/'), '/');
 	let ttsdir = TrimLast($('#tts_model').val().trim().replaceAll('\\', '/'), '/');
-	let vocdir = TrimLast($('#voc_model').val().trim().replaceAll('\\', '/'), '/');
+	let srdir = TrimLast($('#sr_model').val().trim().replaceAll('\\', '/'), '/');
 	let pbin = $('#python_bin').val().trim().replaceAll('\\', '/');
 	let margs = $('#model_args').val().replaceAll('\\', '/');
 	let mtype = $('#tmodel_select').find(':selected').val();
@@ -919,12 +1406,29 @@ function ApplySettings() {
 	let stype = $('#smodel_select').find(':selected').val();
 	let cdev = $('#device_select').find(':selected').val();
 	let smeth = $('#startup_select').find(':selected').val();
-	if (script_dir != sdir || python_bin != pbin || model_dir != mdir || sd_model != sddir || tts_model != ttsdir || voc_model != vocdir || 
-	model_args != margs || model_type != mtype || imodel_type != itype || smodel_type != stype || comp_dev != cdev || start_meth != smeth) {
+	let ebbcode = $('#bbcode_enable').find(':selected').val();
+	let etooluse = $('#tooluse_enable').find(':selected').val();
+	let edevmode = $('#devmode_enable').find(':selected').val();
+	let easasro = $('#asasro_enable').find(':selected').val();
+	let startrk = $('#start_rec_keys').val().trim();
+	let stoprk = $('#stop_rec_keys').val().trim();
+	if (script_dir != sdir || python_bin != pbin || model_dir != mdir || im_model != imdir || tts_model != ttsdir || sr_model != srdir || 
+	model_args != margs || model_type != mtype || imodel_type != itype || smodel_type != stype || comp_dev != cdev || start_meth != smeth ||
+	enable_bbcode != ebbcode || enable_tooluse != etooluse) {
 		ipcRenderer.send('config-app', {
-			script_dir: sdir, python_bin: pbin, model_dir: mdir, sd_model: sddir, tts_model: ttsdir, voc_model: vocdir, 
-			model_args: margs, model_type: mtype, imodel_type: itype, smodel_type: stype, comp_dev: cdev, start_meth: smeth
+			script_dir: sdir, python_bin: pbin, model_dir: mdir, sd_model: imdir, tts_model: ttsdir, sr_model: srdir, 
+			model_args: margs, model_type: mtype, imodel_type: itype, smodel_type: stype, comp_dev: cdev, start_meth: smeth,
+			enable_bbcode: ebbcode, enable_tooluse: etooluse
 		});
+	} else if (enable_devmode != edevmode || enable_asasro != easasro || start_rec_keys != startrk || stop_rec_keys != stoprk) {
+		ipcRenderer.send('config-other', {
+			enable_devmode: edevmode, enable_asasro: easasro, start_rec_keys: startrk, stop_rec_keys: stoprk
+		});
+		enable_devmode = edevmode;
+		enable_asasro = easasro;
+		start_rec_keys = startrk;
+		stop_rec_keys = stoprk;
+		ipcRenderer.send('show-menubar', edevmode);
 	}
 }
 
@@ -966,6 +1470,7 @@ function ApplyConfig() {
 		if (bot_voice != newvc || speech_vol != spvol || speech_rate != srate || pitch_shift != spitch || tts_mode != newtts || anim_mode != newam) {
 			ipcRenderer.send('config-voice', { voice:newvc, vol:spvol, rate:srate, pitch:spitch, engine:newtts, amode:newam });
 			if (anim_mode != newam) {
+				$('#loading_msg').html('Processing avatar image... please wait.');
 				$('#loading_box').show();
 			} else if (alert_msg) {
 				ipcRenderer.send('show-alert', { msg: 'New settings applied.' });
@@ -1005,6 +1510,24 @@ function ShowSetupHelp() {
 	}
 }
 
+function ShowMainConfig() {
+	if ($('#main_settings').is(":hidden")) {
+		$('#main_settings').show();
+		$('#other_settings').hide();
+		$('#main_conf_btn').css('color', '#c4c4cf');
+		$('#other_conf_btn').css('color', '#868687');
+	}
+}
+
+function ShowOtherConfig() {
+	if ($('#other_settings').is(":hidden")) {
+		$('#other_settings').show();
+		$('#main_settings').hide();
+		$('#other_conf_btn').css('color', '#c4c4cf');
+		$('#main_conf_btn').css('color', '#868687');
+	}
+}
+
 function ToggleEditPrompt() {
 	if ($('#edit_dialog').is(":hidden")) {
 		$('#edit_dialog').show();
@@ -1016,10 +1539,27 @@ function ToggleEditPrompt() {
 
 function ApplyNewPrompt() {
 	prompt = $('#prompt_txta').val();
-	p_html = EncodeHTML(prompt).replaceAll("\n", "<br>");
+	let p_html = '';
+	if (prompt.length > max_ip_len) {
+		p_html = EncodeHTML(prompt.substring(0, max_ip_len)).replaceAll("\n", "<br>")+"...";
+	} else {
+		p_html = EncodeHTML(prompt).replaceAll("\n", "<br>");
+	}
 	ipcRenderer.send('update-prompt', prompt.replaceAll("\n", "[AI_UI_BR]"));
 	$('#init_prompt').html(p_html+' '+pedit_img_html);
 	ToggleEditPrompt();
+}
+
+function RefreshPrompt(prompt_txt) {
+	$('#prompt_txta').val(prompt_txt);
+	$('#ip_select').val('default');
+	let p_html = '<div class="prompt"><p id="init_prompt" class="prompt_txt">';
+	if (prompt_txt.length > max_ip_len) {
+		p_html += EncodeHTML(prompt_txt.substring(0, max_ip_len)).replaceAll("\n", "<br>")+"... "+pedit_img_html+'</p></div>';
+	} else {
+		p_html += EncodeHTML(prompt_txt).replaceAll("\n", "<br>")+' '+pedit_img_html+'</p></div>';
+	}
+	$('#chat_log').html(p_html);
 }
 
 function ChangeTalkMode() {
@@ -1031,6 +1571,7 @@ function ChangeTalkMode() {
 function ChangeAvatar() {
 	window.aiuiAPI.openAvatar().then(result => {
 		if (result === false) return;
+		$('#loading_msg').html('Processing avatar image... please wait.');
 		$('#loading_box').show();
 		avatar_img = result.replaceAll('\\', '/');
 		ipcRenderer.send('update-avatar', avatar_img);
@@ -1102,6 +1643,70 @@ function ShowInFolder(elem) {
 	ipcRenderer.send('show-in-dir', file_path);
 }
 
+function ShowImage(elem) {
+	let file_path = $(elem).prop('src').
+		replace('file:///', '').replace('file://', '');
+	
+	if (file_path != '')
+		ipcRenderer.send('show-img', file_path);
+}
+
+function UpdateHeldKeys(input_id, got_combo=false) {
+	let keyShortcut = '';
+	if (held_keys[0] !== null) {
+		keyShortcut += held_keys[0]+'+';
+	}
+	if (held_keys[1] !== null) {
+		keyShortcut += held_keys[1]+'+';
+	}
+	if (held_keys[2] !== null) {
+		keyShortcut += held_keys[2];
+	}
+	if (keyShortcut.endsWith('+'))
+		keyShortcut = keyShortcut.substr(0, keyShortcut.length-1);
+	
+	$(input_id).val(keyShortcut);
+
+	if (got_combo) {
+		held_keys = [null,null,null];
+		$(':focus').blur();
+	}
+}
+
+function ShortcutKeyDown(input_id, key_str, key_code) {
+	let keyName = '';
+	if (typeof key_str == "string" && key_str.length == 1 && alpha_num_regex.test(key_str)) {
+		held_keys[2] = key_str;
+		if (held_keys[0] !== null || held_keys[1] !== null) {
+			UpdateHeldKeys(input_id, true);
+			return true;
+		}
+	} else if (key_code == 16 || key_code == 17 || key_code == 18) {
+		keyName = key_str.replace("Control", "Ctrl");
+	}
+	if (keyName != '') {
+		if (held_keys[0] === null) {
+			held_keys[0] = keyName;
+		} else if (held_keys[0] != keyName) {
+			held_keys[1] = keyName;
+		};
+	}
+	UpdateHeldKeys(input_id);
+	return false;
+}
+
+function ShortcutKeyUp(input_id, key_str, key_code) {
+	key_str = key_str.replace("Control", "Ctrl");
+	if (typeof key_str == "string" && key_str.length == 1 && held_keys[2] === key_str) {
+		held_keys[2] = null;
+	} else if (held_keys[0] === key_str) {
+		held_keys[0] = null;
+	} else if (held_keys[1] === key_str) {
+		held_keys[1] = null;
+	}
+	UpdateHeldKeys(input_id);
+}
+
 function RestartScript() {
 	ipcRenderer.invoke('restart-script');
 }
@@ -1117,6 +1722,29 @@ function QuitApp() {
 $(document).ready(function() {
 	SetAppVersion();
 	StartScript();
+
+	$("#input_btn").on('click', function () {
+		const fpath = $("#user_input").val();
+		AttachFile(fpath, true);
+		$("#input_box").hide();
+	});
+	
+	$("#user_input").on('keyup', function (e) {
+		if (e.key === 'Enter' || e.keyCode === 13) {
+			$("#input_btn").click();
+		}
+	});
+	
+	$("#attach_files").on('change', function(e) {
+		for (let i=0; i < e.target.files.length; ++i) {
+			AttachFile(webUtils.getPathForFile(e.target.files[i]));
+		}
+		$(this).val('');
+	});
+	
+	$("#am_select").on('change', function() {
+		ClearAttachments();
+	});
 
 	$("#text_inp").on('keyup', function (e) {
 		if (e.key === 'Enter' || e.keyCode === 13) {
@@ -1171,6 +1799,44 @@ $(document).ready(function() {
 		}
 	});
 	
+	$('#start_rec_keys').on('keydown', function(e) {
+		e.preventDefault();
+		ShortcutKeyDown('#start_rec_keys', e.key, e.keyCode);
+	});
+	
+	$('#start_rec_keys').on('keyup', function(e) {
+		e.preventDefault();
+		ShortcutKeyUp('#start_rec_keys', e.key, e.keyCode);
+	});
+	
+	$('#stop_rec_keys').on('keydown', function(e) {
+		e.preventDefault();
+		ShortcutKeyDown('#stop_rec_keys', e.key, e.keyCode);
+	});
+	
+	$('#stop_rec_keys').on('keyup', function(e) {
+		e.preventDefault();
+		ShortcutKeyUp('#stop_rec_keys', e.key, e.keyCode);
+	});
+	
+	$('body').on('keydown', function(e) {
+		if ($('#config_tab').is(':hidden')) {
+			if (ShortcutKeyDown('#held_keys', e.key, e.keyCode)) {
+				const heldShortcut = $('#held_keys').val();
+				if (heldShortcut == start_rec_keys) {
+					ToggleRecordBox();
+				} else if (heldShortcut == stop_rec_keys) {
+					StopRecording();
+				}
+			}
+		}
+	});
+	
+	$('body').on('keyup', function(e) {
+		if ($('#config_tab').is(':hidden'))
+			ShortcutKeyUp('#held_keys', e.key, e.keyCode);
+	});
+	
 	$('#avatar_img').on('load', function() {
 		if ($(this).prop('naturalWidth') != 256 || $(this).prop('naturalHeight') != 256) {
 			ipcRenderer.send('show-alert', { msg: 'Avatar images must have a resolution of 256x256' });
@@ -1185,6 +1851,15 @@ $(document).ready(function() {
 			break;
 		case 'pygmalion':
 			$('#prompt_txta').val(ip_vals.pygmalion);
+			break;
+		case 'think':
+			$('#prompt_txta').val(ip_vals.think);
+			break;
+		case 'tools':
+			$('#prompt_txta').val(ip_vals.tools);
+			break;
+		case 'tools2':
+			$('#prompt_txta').val(ip_vals.tools2);
 			break;
 		case 'bbcode':
 			$('#prompt_txta').val(ip_vals.bbcode);
@@ -1206,7 +1881,7 @@ $(document).ready(function() {
 	
 	$('#tts_mode').on('change', function() {
 		let mode_sel = $(this).find(':selected').val();
-		voice_arr = (mode_sel == 0) ? sys_voices : t5_voices;
+		voice_arr = (mode_sel == 0) ? sys_voices : ai_voices;
 		$('#voices').empty();
 		for (let i=0; i<voice_arr.length; ++i) {
 			$('#voices').append('<option value="'+i+'">'+voice_arr[i]+'</option>');
@@ -1215,7 +1890,7 @@ $(document).ready(function() {
 	
 	$('#ttsgen_mode').on('change', function() {
 		let mode_sel = $(this).find(':selected').val();
-		voice_arr = (mode_sel == 0) ? sys_voices : t5_voices;
+		voice_arr = (mode_sel == 0) ? sys_voices : ai_voices;
 		$('#tts_voices').empty();
 		for (let i=0; i<voice_arr.length; ++i) {
 			const voice_name = voice_arr[i].replaceAll('_', ' ');
@@ -1226,5 +1901,14 @@ $(document).ready(function() {
 	$('#anim_mode').on('change', function() {
 		let mode_sel = $(this).find(':selected').val();
 		ipcRenderer.send('check-models', { mode: mode_sel });
+	});
+	
+	$('#vclone_mode').on('change', function() {
+		let mode_sel = $(this).find(':selected').val();
+		if (mode_sel == 1) {
+			$('#ts_txt_row').show();
+		} else {
+			$('#ts_txt_row').hide();
+		}
 	});
 });

@@ -1,7 +1,7 @@
 {
   "name": "AI_UI",
   "displayName": "AI UI",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": "Bitfreak Software",
   "description": "AI User Interface",
   "main": "main.js",
@@ -12,7 +12,8 @@
     "electron": "^23.1.4"
   },
   "dependencies": {
-    "jquery": "^3.6.4",
-    "adm-zip": "^0.5.10"
+    "adm-zip": "^0.5.10",
+    "highlight.js": "^11.11.1",
+    "jquery": "^3.6.4"
   }
 }

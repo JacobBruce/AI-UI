@@ -1,8 +1,8 @@
 const { app, BrowserWindow, dialog, clipboard, ipcMain, shell, Menu, MenuItem } = require('electron');
+const { Readable } = require('stream');
 const fs = require('fs');
 const path = require('path');
 const core = require('./core.js');
-const https = require('https');
 const AdmZip = require("adm-zip");
 
 var win = null;
@@ -46,9 +46,60 @@ function createWindow() {
 			preload: path.join(__dirname, 'preload.js')
 		}
 	});
-
-	win.removeMenu();
+	
+	win.setMenuBarVisibility(false);
 	win.loadFile('./index.html');
+
+	win.on('ready-to-show', () => {
+		let menuItems = Menu.getApplicationMenu().items;
+		let stopShortcut = core.getConfigs().app.stop_rec_keys;
+		let startShortcut = core.getConfigs().app.start_rec_keys;
+		
+		if (stopShortcut != '') {
+			menuItems[0].submenu.insert(0, new MenuItem({
+				id: 'stop-recording',
+				role: 'stopSpeaking',
+				label: 'Stop Recording',
+				accelerator: stopShortcut,
+				registerAccelerator: false,
+				click: () => { win.webContents.send('stop-recording'); }
+			}));
+		}
+		
+		if (startShortcut != '') {
+			menuItems[0].submenu.insert(0, new MenuItem({
+				id: 'start-recording',
+				role: 'startSpeaking',
+				label: 'Start Recording',
+				accelerator: startShortcut,
+				registerAccelerator: false,
+				click: () => { win.webContents.send('start-recording'); }
+			}));
+		}
+		
+		for (let m=0; m < menuItems.length; ++m)
+		{
+			let subMenuItems = menuItems[m].submenu.items;
+			
+			if (menuItems[m].label == "Help" || menuItems[m].role == "help") {
+				menuItems[m].submenu.append(new MenuItem({
+					id: 'github-issues',
+					label: 'Github Issues',
+					click: () => { shell.openExternal("https://github.com/JacobBruce/AI-UI/issues"); }
+				}));
+				continue;
+			}
+			
+			for (let i=0; i < subMenuItems.length; ++i)
+			{
+				if (subMenuItems[i].label == "Reload" || subMenuItems[i].label == "Force Reload" ||
+				subMenuItems[i].role == "reload" || subMenuItems[i].role == "forceReload") {
+					subMenuItems[i].enabled = false;
+					subMenuItems[i].visible = false;
+				}
+			}
+		}
+	});
 	
 	win.on('close', (e) => {
 		if (winState == 0) {
@@ -148,6 +199,15 @@ ipcMain.on('show-in-dir', (event, payload) => {
 	if (fs.existsSync(norm_path)) shell.showItemInFolder(norm_path);
 });
 
+ipcMain.on('show-img', (event, payload) => {
+	const norm_path = path.normalize(payload);
+	if (fs.existsSync(norm_path)) {
+		shell.showItemInFolder(norm_path);
+	} else if (payload.startsWith('https:') || payload.startsWith('http:')) {
+		shell.openExternal(payload);
+	}
+});
+
 ipcMain.on('copy-text', (event, payload) => {
 	if (payload.txt != '') {
 		clipboard.writeText(payload.txt);
@@ -200,17 +260,25 @@ function CheckDownload(dest, ext, cb) {
 	if (cb) cb();
 }
 
-function DownloadFile(url, dest, ext, cb) {  
-	let request = https.get(url, function(response) {
-		let file = fs.createWriteStream(dest);
-		response.pipe(file);
-		file.on("finish", () => {
-			file.close(function() {
-				CheckDownload(dest, ext, cb);
+function DownloadFile(url, dest, ext, cb) {
+	fetch(url).then(response => {
+		if (response.ok && response.body) {
+			let file = fs.createWriteStream(dest);
+			Readable.fromWeb(response.body).pipe(file);
+			file.on("finish", (err) => {
+				if (err) {
+					fs.unlink(dest);
+					if (cb) cb("stream failed");
+				} else {
+					file.close(function() {
+						CheckDownload(dest, ext, cb);
+					});
+				}
 			});
-		});
-	}).on('error', function(err) {
-		fs.unlink(dest);
+		} else {
+			if (cb) cb("bad response");
+		}
+	}).catch((err) => {
 		if (cb) cb(err.message);
 	});
 };
@@ -272,11 +340,13 @@ function CheckModelsExist(anim_mode) {
 		workDir + "/SadTalker/gfpgan/",
 		workDir + "/SadTalker/gfpgan/weights/"
 	];
+	
 	if (!fs.existsSync(workDir)) {
 		dialog.showMessageBox(win, { type: "error", message: "Unable to find Engine Folder. Check the app settings." });
 		return;
 	}
 	CheckDirsExist(modelDirs);
+	
 	if (fs.existsSync(workDir+'/model_urls.json')) {
 		try {
 			urls = JSON.parse(fs.readFileSync(workDir+'/model_urls.json'));
@@ -288,6 +358,7 @@ function CheckModelsExist(anim_mode) {
 		dialog.showMessageBox(win, { type: "error", message: "Could not find model_urls.json file!" });
 		return;
 	}
+	
 	if (anim_mode == 0) {
 		urls = urls.MIT;
 		target = "MakeItTalk";
@@ -298,6 +369,7 @@ function CheckModelsExist(anim_mode) {
 		urls = urls.ST;
 		target = "SadTalker";
 	}
+	
 	for (let i=0; i<urls.length; ++i) {
 		if (urls[i].extract == 0) {
 			if (!fs.existsSync(workDir+urls[i].dest)) missingFiles.push(urls[i]);
@@ -310,9 +382,10 @@ function CheckModelsExist(anim_mode) {
 			}
 		}
 	}
+	
 	if (missingFiles.length > 0) {
 		dialog.showMessageBox(win, { type: "question", title: "Missing Models", 
-		noLink: true, message: target+" model files are missing. Do you want to download them now?", buttons: ["Yes","No"] }).then(value => {
+		noLink: true, message: target+" model file(s) are missing. Do you want to download them now?", buttons: ["Yes","No"] }).then(value => {
 			if (!value.response) DownloadModels(missingFiles);
 		});
 	}
@@ -349,6 +422,10 @@ function ShowGenTTS(gen_tts) {
 	win.webContents.send('tts-result', { wav: gen_tts });
 }
 
+function ShowGenASR(gen_asr) {
+	win.webContents.send('asr-result', { txt: gen_asr });
+}
+
 function ShowGenImg(gen_img) {
 	win.webContents.send('img-result', { img: gen_img });
 }
@@ -367,6 +444,10 @@ function PlayAudio(audio_file) {
 
 function GotAvatar(got_avatar) {
 	win.webContents.send('got-avatar', { got: got_avatar });
+}
+
+function GotTools(tool_funcs) {
+	win.webContents.send('got-tools', { tools: tool_funcs });
 }
 
 ipcMain.on('send-msg', (event, payload) => {
@@ -398,10 +479,42 @@ ipcMain.on('read-text', (event, payload) => {
 	}
 });
 
+ipcMain.on('save-recording', (event, payload) => {
+	fs.writeFileSync(app.getPath("temp")+'/recording.wav', payload);
+	core.sendMsg('speech_recog');
+});
+
+ipcMain.on('save-voice', (event, payload) => {
+	if (fs.existsSync(payload.src_file)) {
+		let voiceData = fs.readFileSync(payload.src_file);
+		if (fs.existsSync(payload.dest_file)) {
+			dialog.showMessageBox(win, { type: "warning", message: "A voice file with that name already exists." });
+		} else {
+			try {
+				fs.writeFileSync(payload.dest_file, voiceData);
+				core.sendMsg('update_voices');
+				dialog.showMessageBox(win, { type: "info", message: "Voice saved, you can now select it from the list of voices." });
+			} catch (err) {
+				dialog.showMessageBoxSync(win, { type: "warning", message: "Unable to save voice file. Ensure you are running the app as an administrator." });
+			}
+		}
+	} else {
+		dialog.showMessageBox(win, { type: "error", message: "Unable to locate voice data!" });
+	}
+});
+
 ipcMain.on('clone-voice', (event, payload) => {
 	const workDir = core.getConfigs().app.script_dir;
 	core.setCloneVoice(payload);
-	if (fs.existsSync(workDir+'/embeddings/'+payload.name+'.npy')) {
+	let voiceFile = workDir+'/embeddings/'+payload.name+'.npy';
+	if (payload.model == 1) {
+		if (payload.transcript.trim() == '') {
+			dialog.showMessageBox(win, { type: "error", message: "Transcript text cannot be empty!" });
+			return;
+		}
+		voiceFile = workDir+'/embeddings/ChatTTS/'+payload.name+'.txt';
+	}
+	if (fs.existsSync(voiceFile)) {
 		dialog.showMessageBox(win, { type: "question", title: "Confirm Action", 
 		noLink: true, message: "A voice with that name already exists. Overwrite it?", buttons: ["Yes","No"] }).then(value => {
 			if (!value.response) {
@@ -434,6 +547,42 @@ ipcMain.on('run-cmd', (event, payload) => {
 });
 
 // ---- CONFIG STUFF ----
+
+function SetRecShortcuts(start_shortcut, stop_shortcut) {
+	let appMenu = Menu.getApplicationMenu();
+	let menuItem = appMenu.getMenuItemById('stop-recording');
+	
+	if (stop_shortcut != '') {
+		if (menuItem === null) {
+			appMenu.items[0].submenu.insert(0, new MenuItem({
+				id: 'stop-recording',
+				role: 'stopSpeaking',
+				label: 'Stop Recording',
+				accelerator: stop_shortcut,
+				registerAccelerator: false,
+				click: () => { win.webContents.send('stop-recording'); }
+			}));
+		} else {
+			menuItem.accelerator = stop_shortcut;
+		}
+	}
+	
+	if (start_shortcut == '') return;
+	menuItem = appMenu.getMenuItemById('start-recording');
+	
+	if (menuItem === null) {
+		appMenu.items[0].submenu.insert(0, new MenuItem({
+			id: 'start-recording',
+			role: 'startSpeaking',
+			label: 'Start Recording',
+			accelerator: start_shortcut,
+			registerAccelerator: false,
+			click: () => { win.webContents.send('start-recording'); }
+		}));
+	} else {
+		menuItem.accelerator = start_shortcut;
+	}
+}
 
 function AddVoices(payload) {
 	win.webContents.send('add-voices', payload);
@@ -487,6 +636,19 @@ ipcMain.on('config-app', (event, payload) => {
 	});
 });
 
+ipcMain.on('config-other', (event, payload) => {
+	core.configOther(payload);
+	SetRecShortcuts(payload.start_rec_keys, payload.stop_rec_keys);
+});
+
+ipcMain.on('show-menubar', (event, payload) => {
+	if (payload == 0) {
+		win.setMenuBarVisibility(false);
+	} else {
+		win.setMenuBarVisibility(true);
+	}
+});
+
 ipcMain.on('update-users', (event, payload) => {
 	dialog.showMessageBox(win, { type: "question", title: "Confirm Action", 
 	noLink: true, message: "Updating the user names will clear the chat log. Proceed?", buttons: ["Confirm","Cancel"] }).then(value => {
@@ -513,9 +675,27 @@ ipcMain.on('update-prompt', (event, payload) => {
 	core.sendMsg('update_prompt');
 });
 
+ipcMain.on('attach-files', (event, payload) => {
+	core.setChatFiles(payload.files);
+	if (payload.mode == "multi") {
+		core.sendMsg('attach_files');
+	} else {
+		core.sendMsg('attach_docs');
+	}
+});
+
 // ---- INIT/END STUFF ----
 
 app.whenReady().then(() => {
+	if (fs.existsSync('./config.json')) {
+		try {
+			core.setConfigs(JSON.parse(fs.readFileSync('./config.json')));
+		} catch (err) {
+			dialog.showMessageBox(win, { type: "error", message: "Error reading config file!" });
+		}
+	}
+	
+	core.setPlatform(process.platform);
 	createWindow();
 
 	ipcMain.handle('dialog:openAvatar', handleJpgOpen);
@@ -551,15 +731,9 @@ ipcMain.handle('restart-script', (event) => {
 });
 
 ipcMain.handle('start-script', (event) => {
-	core.setCallbacks(ShowBotMsg, ShowGenTxt, ShowGenTTS, ShowGenImg, ShowClonedVoice, ChatAIReady, ChatAIEnded, AddVoices, ClearVoices, PlayAudio, AppendLog, GotAvatar);
+	core.setCallbacks(ShowBotMsg, ShowGenTxt, ShowGenTTS, ShowGenASR, ShowGenImg, ShowClonedVoice, ChatAIReady, ChatAIEnded, AddVoices, ClearVoices, PlayAudio, AppendLog, GotAvatar, GotTools);
 	if (fs.existsSync('./config.json')) {
-		try {
-			core.setConfigs(JSON.parse(fs.readFileSync('./config.json')));
-			win.webContents.send('load-config', {configs:core.getConfigs(), skip_inputs:false});
-		} catch (err) {
-			ChatAIEnded('Error reading config file');
-			return;
-		}
+		win.webContents.send('load-config', {configs:core.getConfigs(), skip_inputs:false});
 		CheckModelsExist(core.getConfigs().chat.anim_mode);
 		core.startScript();
 	} else {

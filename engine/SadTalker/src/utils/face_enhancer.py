@@ -1,5 +1,13 @@
 import os
-import torch 
+import sys
+import types
+import torch
+from torchvision.transforms.functional import rgb_to_grayscale
+
+# Fix for basicsr (https://github.com/AUTOMATIC1111/stable-diffusion-webui/issues/13985)
+functional_tensor = types.ModuleType("torchvision.transforms.functional_tensor")
+functional_tensor.rgb_to_grayscale = rgb_to_grayscale
+sys.modules["torchvision.transforms.functional_tensor"] = functional_tensor
 
 from gfpgan import GFPGANer
 

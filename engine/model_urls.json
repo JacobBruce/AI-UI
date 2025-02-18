@@ -22,7 +22,7 @@
 			"dest":"/MakeItTalk/examples/ckpt/s3fd-619a316812.pth", "extract": 0
 		},
 		{
-			"src":"https://huggingface.co/commanderx/Wav2Lip-HD/resolve/main/checkpoints/wav2lip_gan.pth",
+			"src":"https://huggingface.co/commanderx/Wav2Lip-HD/resolve/main/checkpoints/wav2lip_gan.pth?download=true",
 			"dest":"/Wav2Lip/checkpoints/wav2lip_gan.pth", "extract": 0
 		}
 	],

@@ -4,16 +4,20 @@ A user-friendly interface for interacting with AI. Includes a voiced chat bot fe
 
 ![AI UI Screenshot](./img/screenshot.jpg)
 
-## Installing on Windows
+## Install Guide
 
-Download the latest Windows release of AI UI then download and install the following:
+Download the [latest release](https://github.com/JacobBruce/AI-UI/releases) of AI UI then follow the instructions for your platform:
 
-- Python (3.10.6 recommended) (https://www.python.org/downloads/windows/)
+<details><summary>Show install instructions for Windows</summary><br>
 
-Optional but highly recommended:
-- CUDA 11.7 (for Nvidia GPU's) (https://developer.nvidia.com/cuda-11-7-0-download-archive)
+First you will need to install Python:
 
-Now open a command prompt as an administrator and create a Python virtual environment using this command:
+- [Python](https://www.python.org/downloads/windows/) (3.12.x recommended)
+
+CUDA is optional but highly recommended if you have an Nvidia GPU:
+- [CUDA](https://developer.nvidia.com/cuda-toolkit-archive) (12.4 recommended)
+
+Now open a command prompt as an administrator and create a virtual Python environment using this command:
 ```
 python -m venv C:/venv
 ```
@@ -30,13 +34,78 @@ pip install -r C:/AI_UI/engine/requirements.txt
 ```
 Replace `C:/AI_UI/` with the location where AI UI was extracted (should contain AI_UI.exe)
 
-If you want GPU support run these two commands while the virtual environment is still activated:
+If your GPU supports CUDA then run this command before installing the requirements in the previous step:
 ```
-pip uninstall torch torchvision torchaudio
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+</details>
+
+<details><summary>Show install instructions for Linux</summary><br>
+
+First ensure you have Python installed (3.12.x recommended). You may also need to install pip and the tool for creating virtual Python environments using these commands:
+
+```
+sudo apt install python3-pip
+```
+```
+sudo apt install python3.12-venv
 ```
 
-Now you can visit the Settings tab in AI UI and fill out the required information. The 'Python Binary' setting would be `C:/venv/Scripts/python.exe` for this example setup. Check the Console tab for errors if the engine wont start.
+Now open a terminal and navigate to the directory where you want to create a virtual Python environment then run this command:
+```
+python3 -m venv ./venv
+```
+This will create a folder called venv containing the Python environment.
+
+Now you can activate the virtual environment by running this command:
+```
+source ./venv/bin/activate
+```
+Now install the required Python packages into the virtual environment using this command:
+```
+pip3 install -r ./AI_UI/engine/requirements.txt
+```
+Replace `./AI_UI/` with the location where AI UI was extracted (should contain electron)
+
+If your GPU supports CUDA then run this command before installing the requirements in the previous step:
+```
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+
+Now exit the virtual environment and run this command to install the nodejs package manager:
+```
+sudo apt install npm
+```
+
+Now navigate to the AI UI app folder then install the required nodejs packages using these commands:
+```
+cd AI_UI/resources/app
+```
+```
+npm install
+```
+
+Now navigate back to the AI_UI folder (`cd ../..`) and launch AI UI using this command:
+```
+./electron --no-sandbox
+```
+</details>
+
+## Important Info
+
+### Windows Users
+
+If you place AI UI into your Program Files directory or any other protected directory then you will need to run the app in administrator mode. It is recommended to place AI UI in another location (such as `C:/AI_UI/`) to avoid the use of administrator mode.
+
+### Linux Users
+
+Before starting AI UI from a terminal, make sure you navigate to the location where the electron binary is located instead of trying to launch it from another directory. If you don't do this AI UI will use the wrong working directory and it will fail to read/write files.
+
+## Getting Started
+
+After all the requirements have been installed you can launch the AI UI app. To get started you will need to visit the Settings tab so the engine knows where to find things like the Python environment and your model files.
+
+In this example the 'Python Binary' setting would be `C:/venv/Scripts/python.exe` for Windows or `path/to/venv/lib/python3` for Linux. Check the Console tab for errors if the engine wont start.
 
 To make the chat bot work you'll need to download a text generation AI model from [Hugging Face](https://huggingface.co/) (must use the HF Transformers format). Models which have been fine-tuned on conversational text should work best for the chat bot.
 
