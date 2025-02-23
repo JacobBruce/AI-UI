@@ -53,6 +53,7 @@
 								<option value="pygmalion">Pygmalion Format</option>
 								<option value="bbcode">BBCode Instructions</option>
 								<option value="think">Chain-of-Thought</option>
+								<option value="think2">Chain-of-Thought (alt)</option>
 							</select>
 							<button class="btn dialog_btn" onclick="ApplyNewPrompt()">APPLY</button>
 							<button class="btn dialog_btn" onclick="ToggleEditPrompt()">CANCEL</button>
@@ -286,8 +287,8 @@
 						<input type="text" id="lora_file" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenFile('lora_file',true)">BROWSE</button>
 						<span class="cfg_lbl">LoRA Folder <img class="help_icon" width="16" height="16" title="The directory/repository containing the above LoRA model file. This setting overrides im_lora_dir if it exists in the Model Setup arguments." /></span>
 						<input type="text" id="lora_dir" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenFolder('lora_dir')">BROWSE</button>
-						<!--<span class="cfg_lbl">LoRA Scale <img class="help_icon" width="16" height="16" title="Changes how much the LoRA model will influence the output. A higher value means the LoRA model has more influence. Has a default value of 1.0" /></span>
-						<input type="number" id="lora_scale" class="cfg_num" min="0.1" max="1.0" step="0.05" value="1.0">-->
+						<span class="cfg_lbl">LoRA Scale <img class="help_icon" width="16" height="16" title="Changes how much the LoRA model will influence the output. A higher value means the LoRA model has more influence. Has a default value of 1.0" /></span>
+						<input type="number" id="lora_scale" class="cfg_num" min="0.05" max="1.95" step="0.05" value="1.0">
 						<button id="copy_img_btn" class="btn cfg_btn" onclick="CopyGenImg()">COPY TO CLIPBOARD</button>
 						<button id="img_dir_btn" class="btn cfg_btn" onclick="OpenImgDir()">OPEN IMAGE FOLDER</button>
 					</center>
@@ -384,7 +385,7 @@
 								<option value="0" selected>False</option>
 							</select>
 							<span class="cfg_lbl">Start Recording Shortcut <img class="help_icon" width="16" height="16" title="They keyboard shortcut used to start voice recording." /></span>
-							<input type="text" id="start_rec_keys" class="cfg_txt" value="">
+							<input type="text" id="start_rec_keys" class="cfg_txt keys_input" value="">
 						</div>
 						<div class="settings_col">
 							<span class="cfg_lbl">Enable Tool Use <img class="help_icon" width="16" height="16" title="Allow the chat bot to utilize the tool functions in /engine/tools/tool_funcs.py" /></span>
@@ -398,7 +399,7 @@
 								<option value="0" selected>False</option>
 							</select>
 							<span class="cfg_lbl">Stop Recording Shortcut <img class="help_icon" width="16" height="16" title="They keyboard shortcut used to stop voice recording." /></span>
-							<input type="text" id="stop_rec_keys" class="cfg_txt" value="">
+							<input type="text" id="stop_rec_keys" class="cfg_txt keys_input" value="">
 						</div>
 					</div>
 					<br><hr><br>
@@ -603,6 +604,14 @@
 					<p>Description: The directory or Model ID of an adapter for the text generation model. Adapters adjust the base model so it acts like a fine-tuned model without the need to download a full fine-tuned model.</p>
 					<p>Valid Values: any string (adapter model folder)</p><hr class="wide_hr">
 					
+					<h3>im_vae_file <small class="arg_title">(default: none)</small></h3>
+					<p>Description: The path to a Variational Auto-Encoder (VAE) model file to be used by the image generation model. Cannot be directory, must be path to a single model file.</p>
+					<p>Valid Values: any string (vae model file)</p><hr class="wide_hr">
+					
+					<h3>im_config_file <small class="arg_title">(default: none)</small></h3>
+					<p>Description: The path to a .yaml config file which specifies the architecture for the image generation model. This only has an effect when loading single model files, can be useful for offline model loading.</p>
+					<p>Valid Values: any string (model config file)</p><hr class="wide_hr">
+					
 					<h3>im_lora_file <small class="arg_title">(default: none)</small></h3>
 					<p>Description: The file name (not a full path) of a LoRA model to be used as an adapter for the image generation model (e.g. pixel-art-xl.safetensors). Requires <b>im_lora_dir</b> to be set.</p>
 					<p>Valid Values: any string (lora model file)</p><hr class="wide_hr">
@@ -611,13 +620,9 @@
 					<p>Description: The directory containing the LoRA adapter for the image generation model. This can also point to an online Hugging Face repository (e.g. nerijs/pixel-art-xl)</p>
 					<p>Valid Values: any string (lora model directory)</p><hr class="wide_hr">
 					
-					<h3>im_vae_file <small class="arg_title">(default: none)</small></h3>
-					<p>Description: The path to a Variational Auto-Encoder (VAE) model file to be used by the image generation model. Cannot be directory, must be path to a single model file.</p>
-					<p>Valid Values: any string (vae model file)</p><hr class="wide_hr">
-					
-					<h3>im_config_file <small class="arg_title">(default: none)</small></h3>
-					<p>Description: The path to a .yaml config file which specifies the architecture for the image generation model. This only has an effect when loading single model files, can be useful for offline model loading.</p>
-					<p>Valid Values: any string (model config file)</p><hr class="wide_hr">
+					<h3>im_lora_scale <small class="arg_title">(default: 1.0)</small></h3>
+					<p>Description: Controls how much the LoRA adapter will influence the output of the image model. Higher values will give the LoRA more influence on the output. Should be a value between 0 and 2.</p>
+					<p>Valid Values: decimal number (0.0 to 2.0)</p><hr class="wide_hr">
 				
 					<h3>im_torch_dtype <small class="arg_title">(default: float16)</small></h3>
 					<p>Description: The Torch data type used by the image generation model. Models using float16 will be faster and use less memory but are slightly lower quality than float32 models.</p>

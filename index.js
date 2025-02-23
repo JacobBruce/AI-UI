@@ -5,11 +5,12 @@ const hljs = require('highlight.js');
 const pedit_img_html = '<button id="edit_btn" onclick="ToggleEditPrompt()"><img class="edit_img" src="./img/edit_w.png" width="15" /></button>';
 const default_ip = "Chat log between HUMAN_NAME and BOT_NAME on DATE";
 const pygmalion_ip = "BOT_NAME's Persona: A helpful AI assistant who can use the [AI_IMG] tag to generate images from a description.\n<START>\nHUMAN_NAME: show me an image of a cyberpunk cityscape\nBOT_NAME: [AI_IMG]cyberpunk cityscape[/AI_IMG]";
-const thinking_ip = "You are a helpful AI assistant who can think step by step before answering questions. You can put your thoughts inside the <thoughts> and </thoughts> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden and separated from your actual responses.";
+const thinking_ip = "You are a helpful AI assistant who can think step by step before answering questions. You can put your thoughts inside the <think> and </think> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden and separated from your actual responses.";
+const thinking2_ip = "You are a helpful AI assistant who can think step by step before answering questions. You can put your thoughts inside the <thoughts> and </thoughts> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden and separated from your actual responses.";
 const bbcode_ip = "You can use BBCode tags to format text and embed media such as images and videos into your messages.\nUse [b], [i], [u], and [s] to make text bold, italic, underlined, or striked-through. Example: [b]this is bold text[/b]\nUse [h1], [h2], [h3], [h4], [h5], and [h6] for headings. Example: [h3]this is a heading[/h3]\nUse the [hr] tag to insert a horizontal rule. Example: this is above the line[hr]this is below\nUse the [center] tag to horizontally center text and other content. Example [center]this is centered text[/center]\nUse the [quote] tag for quoting text. Example: [quote]this is a quote[/quote]\nUse the [spoiler] tag for hiding spoiler text and other content. Example: [spoiler]this is a spoiler[/spoiler]\nUse the [pre] tag to post preformatted text. Example: [pre]this is preformatted text[/pre]\nUse the [ol] and [ul] tags for ordered and unordered lists. Use [li] or [*] for list items. Example: [ol][*]item1[*]item2[/ol]\nUse the [url] tag to post a link. Example: [url=http://test.com]this is a link[/url]\nUse the [code] tag to post a code snippet. Example: [code=C++]int abc = 123;[/code]\nUse the [video] and [audio] tags to post a video or audio file. Example: [video]http://test.com/vid.mp4[/video]\nUse the [youtube] tag to post a youtube video with just the video ID. Example: [youtube]5eqRuVp65eY[/youtube]\nUse the [img] tag to post an image. Example: [img]http://test.com/pic.png[/img]\nUse the [ai_img] tag to generate an image from a description using AI. Example: [ai_img]cute kitten[/ai_img]";
 var tooluse_ip = "You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools:\n<tools>{tool_funcs}</tools>\n\nFor each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>";
 var tooluse2_ip = "You are an expert in composing functions. You are given a question and a set of possible functions. Based on the question, you will need to make one or more function/tool calls to achieve the purpose. If none of the function can be used, point it out. If the given question lacks the parameters required by the function, also point it out.\n\nIf you decide to invoke any of the function(s), you MUST put it in this format:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>\n\nHere is a list of functions in JSON format that you can invoke:\n{tool_funcs}";
-var ip_vals = { chat:'', pygmalion:'', think:'', tools:'', tools2:'', bbcode:'' };
+var ip_vals = { chat:'', pygmalion:'', think:'', think2:'', tools:'', tools2:'', bbcode:'' };
 
 const bb_code_tags = [
 	"B", "b", "I", "i", "U", "u", "S", "s", "OL", "ol", "UL", "ul", "LI", "li", "IMG", "img", "PRE", "pre", 
@@ -263,7 +264,8 @@ function EncodeHTML(txt) {
 }
 
 function EncodeAIXML(txt) {
-	return txt.replaceAll('<thoughts>', '[AIUI_THOUGHTS]').replaceAll('</thoughts>', '[AIUI_THOUGHTS END]');
+	return txt.replaceAll('<thoughts>', '[AIUI_THOUGHTS]').replaceAll('</thoughts>', '[AIUI_THOUGHTS END]').
+		replaceAll('<think>', '[AIUI_THOUGHTS]').replaceAll('</think>', '[AIUI_THOUGHTS END]');
 }
 
 function ConvertBB(txt) {
@@ -1001,6 +1003,7 @@ function GenImage() {
 	const vae_file = $('#vae_file').val();
 	const lora_file = $('#lora_file').val();
 	const lora_dir = $('#lora_dir').val();
+	const lora_scale = $('#lora_scale').val();
 	let img_width = 'auto';
 	let img_height = 'auto';
 	if ($('#is_select').find(':selected').val() == 'custom') {
@@ -1010,7 +1013,7 @@ function GenImage() {
 	ipcRenderer.send('gen-image', {
 		img_prompt: prompt_txt, neg_prompt: prompt_neg, steps: infer_steps, 
 		guidance: guide_scale, width: img_width, height: img_height, check: safety_check,
-		vae_file: vae_file, lora_file: lora_file, lora_dir: lora_dir
+		vae_file: vae_file, lora_file: lora_file, lora_dir: lora_dir, lora_scale: lora_scale
 	});
 	StartGenerating('#imggen_box .generating');
 }
@@ -1085,7 +1088,7 @@ ipcRenderer.on('init-ui', (event, payload) => {
 		} else {
 			prompt = payload.state.replaceAll("[AI_UI_BR]", "\n");
 		}
-		ip_vals = { chat:def_ip, pygmalion:pyg_ip, think:thinking_ip, tools:tools_ip, tools2:tools2_ip, bbcode:bbcode_ip };
+		ip_vals = { chat:def_ip, pygmalion:pyg_ip, think:thinking_ip, think2:thinking2_ip, tools:tools_ip, tools2:tools2_ip, bbcode:bbcode_ip };
 		RefreshPrompt(prompt);
 		$('#gen_result').html('');
 		$('#img_result').html('');
@@ -1382,6 +1385,7 @@ ipcRenderer.on('load-config', (event, payload) => {
 	$('#vae_file').val(gen_config.vae_file);
 	$('#lora_file').val(gen_config.lora_file);
 	$('#lora_dir').val(gen_config.lora_dir);
+	$('#lora_scale').val(gen_config.lora_scale);
 	
 	if (gen_config.image_width != 'auto' && gen_config.image_height != 'auto') {
 		$('#is_select').val('custom');
@@ -1665,9 +1669,10 @@ function UpdateHeldKeys(input_id, got_combo=false) {
 	if (keyShortcut.endsWith('+'))
 		keyShortcut = keyShortcut.substr(0, keyShortcut.length-1);
 	
-	$(input_id).val(keyShortcut);
+	let inpElem = $(input_id);
+	inpElem.val(keyShortcut);
 
-	if (got_combo) {
+	if (got_combo && inpElem.hasClass("keys_input")) {
 		held_keys = [null,null,null];
 		$(':focus').blur();
 	}
@@ -1854,6 +1859,9 @@ $(document).ready(function() {
 			break;
 		case 'think':
 			$('#prompt_txta').val(ip_vals.think);
+			break;
+		case 'think2':
+			$('#prompt_txta').val(ip_vals.think2);
 			break;
 		case 'tools':
 			$('#prompt_txta').val(ip_vals.tools);

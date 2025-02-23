@@ -129,6 +129,7 @@ model_adapter = ''
 im_lora_file = ''
 im_lora_dir = ''
 im_vae_file = ''
+im_lora_scale = 1.0
 im_safety_check = True
 im_cpu_offload = True
 im_att_slicing = True
@@ -167,6 +168,8 @@ for arg in model_args:
 		im_lora_file = carg.replace("im_lora_file=", "", 1)
 	elif carg.startswith("im_lora_dir="):
 		im_lora_dir = carg.replace("im_lora_dir=", "", 1)
+	elif carg.startswith("im_lora_scale="):
+		im_lora_scale = float(carg.replace("im_lora_scale=", "", 1))
 	elif carg.startswith("im_vae_file="):
 		im_vae_file = carg.replace("im_vae_file=", "", 1)
 	elif carg.startswith("im_config_file="):
@@ -913,20 +916,22 @@ last_sc_val = im_safety_check
 last_vf_val = im_vae_file
 last_lf_val = im_lora_file
 last_ld_val = im_lora_dir
+last_ls_val = im_lora_scale
 	
-def DiffIMGMode(safety_check, vae_file, lora_file, lora_dir):
-	global last_sc_val, last_vf_val, last_lf_val, last_ld_val
-	if safety_check != last_sc_val or vae_file != last_vf_val or lora_file != last_lf_val or lora_dir != last_ld_val:
+def DiffIMGMode(safety_check, vae_file, lora_file, lora_dir, lora_scale):
+	global last_sc_val, last_vf_val, last_lf_val, last_ld_val, last_ls_val
+	if safety_check != last_sc_val or vae_file != last_vf_val or lora_file != last_lf_val or lora_dir != last_ld_val or lora_scale != last_ls_val:
 		result = 2
 	else:
-		result = int(safety_check != im_safety_check or vae_file != im_vae_file or lora_file != im_lora_file or lora_dir != im_lora_dir)
+		result = int(safety_check != im_safety_check or vae_file != im_vae_file or lora_file != im_lora_file or lora_dir != im_lora_dir or lora_scale != im_lora_scale)
 	last_sc_val = safety_check
 	last_vf_val = vae_file
 	last_lf_val = lora_file
 	last_ld_val = lora_dir
+	last_ls_val = lora_scale
 	return result
 
-def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file=None, lora_dir=None):
+def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file=None, lora_dir=None, lora_scale=None):
 	global im_model, reserve_vram_mb
 	orig_rvram = reserve_vram_mb
 	im_model = None
@@ -937,6 +942,7 @@ def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file
 	vae_file = im_vae_file if vae_file == None else vae_file
 	lora_file = im_lora_file if lora_file == None else lora_file
 	lora_dir = im_lora_dir if lora_dir == None else lora_dir
+	lora_scale = im_lora_scale if lora_scale == None else lora_scale
 	
 	CleanVRAM()
 	if reserve_vram_mb > min_res_vram_mb:
@@ -985,6 +991,7 @@ def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file
 		
 		if lora_file != '':
 			im_model.load_lora_weights(lora_dir, weight_name=lora_file)
+			im_model.fuse_lora(lora_scale=lora_scale)
 		
 		if im_cpu_offload:
 			im_model.enable_model_cpu_offload()
@@ -1304,11 +1311,12 @@ while (True):
 		vae_file = input()
 		lora_file = input()
 		lora_dir = input()
+		lora_scale = float(input())
 		img_num = -5
 		safety_check = True if safety_check > 0 else False
-		diff_mode = DiffIMGMode(safety_check, vae_file, lora_file, lora_dir)
+		diff_mode = DiffIMGMode(safety_check, vae_file, lora_file, lora_dir, lora_scale)
 		if im_model == None or diff_mode == 2 or (img_gen_mode == False and diff_mode == 1):
-			if LoadIMGModel(False, safety_check, vae_file, lora_file, lora_dir):
+			if LoadIMGModel(False, safety_check, vae_file, lora_file, lora_dir, lora_scale):
 				img_gen_mode = True
 			else:
 				img_num = -2
@@ -1423,38 +1431,36 @@ while (True):
 	elif msg == "redo_last":
 		messages = messages[:-1:]
 		PrunePrompt()
-		prompt += "\n"+bot_name_c
 		rando_lvl += rando_add
 	elif msg == "cont_chat":
-		prompt += "\n"+bot_name_c
 		if use_chat_template:
 			messages.append({"role":user_name, "content":"continue"})
-
-	mm_msg = None
-	if len(chat_files) > 0:
-		prompt += "\n"+user_name+roles_append_str
-		mm_msg = { "role": user_name, "content": [] }
-		for chat_file in chat_files:
-			prompt += chat_file["file"] + "\n"
-			if chat_file["type"] == "text":
-				mm_msg["content"].append({ "type": "text", "text": chat_file["content"] })
-			else:
-				mm_msg["content"].append({ "type": chat_file["type"], chat_file["content"]: chat_file["file"] })
-		prompt = prompt.rstrip("\n")
+	else:
+		mm_msg = None
+		if len(chat_files) > 0:
+			prompt += "\n"+user_name+roles_append_str
+			mm_msg = { "role": user_name, "content": [] }
+			for chat_file in chat_files:
+				prompt += chat_file["file"] + "\n"
+				if chat_file["type"] == "text":
+					mm_msg["content"].append({ "type": "text", "text": chat_file["content"] })
+				else:
+					mm_msg["content"].append({ "type": chat_file["type"], chat_file["content"]: chat_file["file"] })
+			prompt = prompt.rstrip("\n")
+		
+		msgs = msg.split("[AIUI_END]")
+		for msg_txt in msgs:
+			msg = msg_txt.strip(" \n")
+			if msg != '':
+				prompt += "\n"+user_name+roles_append_str+msg
+				if mm_msg == None:
+					messages.append({"role": user_name, "content": msg})
+				else:
+					mm_msg["content"].append({"type": "text", "text": msg, "user":True})
+		
+		if mm_msg != None: messages.append(mm_msg)
 	
-	msgs = msg.split("[AIUI_END]")
-	for msg_txt in msgs:
-		msg = msg_txt.strip(" \n")
-		if msg != '':
-			prompt += "\n"+user_name+roles_append_str+msg
-			if mm_msg == None:
-				messages.append({"role": user_name, "content": msg})
-			else:
-				mm_msg["content"].append({"type": "text", "text": msg, "user":True})
-	
-	if mm_msg != None: messages.append(mm_msg)
 	prompt += "\n"+bot_name_c
-
 	rando_lvl -= rando_sub
 	temp = min(1.0, max(rando_lvl, rando_min))
 	

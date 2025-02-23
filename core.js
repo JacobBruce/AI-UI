@@ -8,7 +8,7 @@ var APP_CONFIG = {
 	enable_bbcode: 1, enable_tooluse: 1, enable_devmode: 0, enable_asasro: 0, start_rec_keys: '', stop_rec_keys: '' //other
 };
 var GEN_CONFIG = { 
-	prompt_text: '', prompt_neg: '', image_width: 'auto', image_height: 'auto', inference_steps: 50, guidance_scale: 7.5, safety_check: 1, vae_file: '', lora_file: '', lora_dir: '', //image
+	prompt_text: '', prompt_neg: '', image_width: 'auto', image_height: 'auto', inference_steps: 50, guidance_scale: 7.5, safety_check: 1, vae_file: '', lora_file: '', lora_dir: '', lora_scale: 1.0, //image
 	max_len: 50, min_len: 1, temp: 0.8, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0, //text
 	tts_voice: 0, tts_vol: 1.0, tts_rate: 200, tts_pitch: 0, tts_mode: 0 //speech
 };
@@ -154,6 +154,7 @@ function ConfigGen(gen_config) {
 		GEN_CONFIG.vae_file = gen_config.vae_file;
 		GEN_CONFIG.lora_file = gen_config.lora_file;
 		GEN_CONFIG.lora_dir = gen_config.lora_dir;
+		GEN_CONFIG.lora_scale = gen_config.lora_scale;
 	} else if (gen_config.hasOwnProperty('tts_txt')) {
 		GEN_CONFIG.tts_voice = gen_config.voice;
 		GEN_CONFIG.tts_vol = gen_config.vol;
@@ -437,6 +438,8 @@ function StartScript() {
 			AI_ENGINE.stdin.write(GEN_CONFIG.lora_file+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.lora_dir);
 			AI_ENGINE.stdin.write(GEN_CONFIG.lora_dir+ENDL);
+			LogToConsole('STDIN: '+GEN_CONFIG.lora_scale);
+			AI_ENGINE.stdin.write(GEN_CONFIG.lora_scale+ENDL);
 		} else if (out_str == 'AVATAR_IMG:') {
 			CHAT_STATE = 'AVATAR_IMG';
 			LogToConsole('STDIN: '+APP_CONFIG.avatar_img);
