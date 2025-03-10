@@ -25,7 +25,7 @@ def local_timezone() -> str:
 
 # FUNCTIONS FOR AIUI ENGINE
 
-def CallToolFunc(func_name, func_args):
+def CallToolFunc(func_name, func_args, aiui_funcs):
 	if func_name == "utc_date":
 		return utc_date()
 	elif func_name == "utc_time":

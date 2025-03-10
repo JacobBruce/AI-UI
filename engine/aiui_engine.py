@@ -24,7 +24,7 @@ from scipy.io import wavfile
 from scipy.signal import resample
 from tools.av import load_audio
 from tools.text_norm import NormalizeText
-from tools.tool_funcs import GetToolFuncs, CallToolFunc
+from tools.rp_funcs import SaveGame, LoadGame, NewGame
 from urllib.request import urlopen
 from qwen_vl_utils import process_vision_info
 from speechbrain.inference import EncoderClassifier
@@ -32,7 +32,8 @@ from MakeItTalk.main_end2end import ResampleAudio, LoadFace, AnimFace
 from Wav2Lip.inference import load_face, anim_face
 from SadTalker.inference import loadface, animface
 from phonemizer.backend.espeak.wrapper import EspeakWrapper
-from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, FluxPipeline, AutoencoderKL
+from diffusers.utils import load_image
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, FluxPipeline, AutoencoderKL, DDIMScheduler
 from transformers import StoppingCriteria, StoppingCriteriaList, SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan, pipeline
 from transformers import AutoTokenizer, AutoProcessor, AutoModel, AutoModelForCausalLM, AutoModelForImageTextToText, AutoModelForSpeechSeq2Seq
 
@@ -84,6 +85,10 @@ avatar_img = input()
 if not os.path.isdir(work_dir):
 	sys.exit("ERROR: cannot find engine folder at "+work_dir)
 
+print("TOOL_CONFIG:")
+temp_form = input()
+tool_mode = input()
+
 print("AI_CONFIG:")
 msg_mem = int(input())
 gen_max = int(input())
@@ -107,6 +112,7 @@ roles_append_str = ': '
 prompt = ''
 init_prompt = ''
 msg = ''
+redo_count = 0
 r = 0
 
 messages = []
@@ -115,6 +121,7 @@ chat_files = []
 rag_files = []
 end_strings = None
 tool_funcs = None
+use_tool_config = True
 
 bbc_aimg_tags = ["AI_IMG", "ai_img"]
 
@@ -132,7 +139,7 @@ im_vae_file = ''
 im_lora_scale = 1.0
 im_safety_check = True
 im_cpu_offload = True
-im_att_slicing = True
+im_att_slicing = False
 im_from_single_file = False
 im_local_files = False
 im_config_file = None
@@ -146,14 +153,15 @@ use_safetensors = None
 load_in_8bit = False
 custom_model_code = False
 custom_token_code = False
-use_chat_template = False
-use_tool_template = False
 skip_special_tokens = True
 cleanup_token_space = True
 torch_compile = False
 chunk_audio_secs = 30
 im_torch_dtype = torch.float16
 torch_dtype = "auto"
+
+use_chat_template = True if temp_form != "none" else False
+use_tool_template = True if temp_form == "tool" else False
 
 if imodel_type == 1: im_att_slicing = False
 comp_dev = 'cuda' if device != 'cpu' and torch.cuda.is_available() else 'cpu'
@@ -254,11 +262,13 @@ for arg in model_args:
 		use_chat_temp = carg.replace("use_chat_template=", "", 1)
 		if use_chat_temp.lower() == "true" or use_chat_temp == "1":
 			use_chat_template = True
+		use_tool_config = False
 	elif carg.startswith("use_tool_template="):
 		use_tool_temp = carg.replace("use_tool_template=", "", 1)
 		if use_tool_temp.lower() == "true" or use_tool_temp == "1":
 			use_tool_template = True
 			use_chat_template = True
+		use_tool_config = False
 	elif carg.startswith("skip_special_tokens="):
 		skip_spec_tkns = carg.replace("skip_special_tokens=", "", 1)
 		if skip_spec_tkns.lower() == "false" or skip_spec_tkns == "0":
@@ -299,6 +309,14 @@ def CountFiles(dir_path):
 		if os.path.isfile(os.path.join(dir_path, path)):
 			count += 1
 	return count
+
+def NewFileName(dir_path, name_str):
+	file_num = CountFiles(dir_path)
+	file_name = name_str.replace("#NUM", str(file_num))
+	while os.path.isfile(dir_path+file_name):
+		file_num += 1
+		file_name = name_str.replace("#NUM", str(file_num))
+	return { 'num': file_num, 'file': dir_path+file_name }
 	
 def SetWorkingDir(face_anim_mode):
 	if face_anim_mode == 0:
@@ -325,13 +343,24 @@ def StripEnd(txt, ss):
 def StripStart(txt, ss):
 	return txt[len(ss):] if txt.startswith(ss) else txt
 
-if enable_tooluse:
-	tool_funcs = GetToolFuncs()
-	tools_str = ''
-	for f in tool_funcs:
-		tools_str += json.dumps(transformers.utils.get_json_schema(f))+','
-	print("TOOL_FUNCS:"+tools_str.rstrip(',').replace("\n", "[AI_UI_BR]"), flush=True)
-	time.sleep(0.1)
+def LoadToolFuncs():
+	global tool_funcs, tool_func
+	if enable_tooluse:
+		if tool_mode == "roleplay":
+			tool_module = "tools.rp_funcs"
+		elif tool_mode == "research":
+			tool_module = "tools.search_funcs"
+		elif tool_mode == "math":
+			tool_module = "tools.math_funcs"
+		else:
+			tool_module = "tools.tool_funcs"
+		tool_funcs = getattr(importlib.import_module(tool_module), "GetToolFuncs")()
+		tool_func = getattr(importlib.import_module(tool_module), "CallToolFunc")
+		tools_str = ''
+		for f in tool_funcs:
+			tools_str += json.dumps(transformers.utils.get_json_schema(f))+','
+		print("TOOL_FUNCS:"+tools_str.rstrip(',').replace("\n", "[AI_UI_BR]"), flush=True)
+		time.sleep(0.1)
 
 ###### TTS Stuff ######
 
@@ -875,8 +904,8 @@ def TokenizeChat():
 
 def GenText(it, rl):
 	global model, tokenizer, end_strings
-	CleanVRAM()
 	if model == None: LoadModel()
+	CleanVRAM()
 	if end_strings == None: end_strings = GetStopStrings()
 	with torch.no_grad():
 		if isinstance(it, torch.Tensor) or type(it) is list:
@@ -910,6 +939,7 @@ def GenNoStop(it, nt, mt, rl, tk, tp, ty, rp):
 ###### IMAGE MODEL STUFF ######
 
 im_model = None
+orig_shdlr = None
 img_gen_mode = False
 
 last_sc_val = im_safety_check
@@ -917,6 +947,10 @@ last_vf_val = im_vae_file
 last_lf_val = im_lora_file
 last_ld_val = im_lora_dir
 last_ls_val = im_lora_scale
+
+default_neg_prompt = "low resolution, lowres, low quality, bad quality, jpeg artifacts, pixelated, blurry, error, glitch, cropped, out of frame, out of focus"
+
+person_neg_prompt = "face asymmetry, deformed face, deformed eyes, eyes asymmetry, missing fingers, extra fingers, fused fingers, mutated hands, bad anatomy, wrong proportions, extra limbs, malformed limbs, missing arms, missing legs, extra arms, extra legs"
 	
 def DiffIMGMode(safety_check, vae_file, lora_file, lora_dir, lora_scale):
 	global last_sc_val, last_vf_val, last_lf_val, last_ld_val, last_ls_val
@@ -949,40 +983,29 @@ def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file
 		reserve_vram_mb = min_res_vram_mb
 	ReserveVRAM()
 
+	if imodel_type == 0:
+		model_loader = StableDiffusionPipeline
+	elif imodel_type == 1:
+		model_loader = StableDiffusionXLPipeline
+	else:
+		model_loader = FluxPipeline
+	
 	try:
 		if im_from_single_file or im_model_id.endswith(".safetensors") or im_model_id.endswith(".ckpt"):
 			if safety_check:
-				if imodel_type == 0:
-					im_model = StableDiffusionPipeline.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file)
-				elif imodel_type == 1:
-					im_model = StableDiffusionXLPipeline.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file)
-				else:
-					im_model = FluxPipeline.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file)
-			elif imodel_type == 0:
-				im_model = StableDiffusionPipeline.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file, safety_checker=None)
-			elif imodel_type == 1:
-				im_model = StableDiffusionXLPipeline.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file, safety_checker=None)
+				im_model = model_loader.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file)
 			else:
-				im_model = FluxPipeline.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file, safety_checker=None)
+				im_model = model_loader.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file, safety_checker=None)
 		else:
 			if safety_check:
-				if imodel_type == 0:
-					im_model = StableDiffusionPipeline.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files)
-				elif imodel_type == 1:
-					im_model = StableDiffusionXLPipeline.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files)
-				else:
-					im_model = FluxPipeline.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files)
-			elif imodel_type == 0:
-				im_model = StableDiffusionPipeline.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, safety_checker=None)
-			elif imodel_type == 1:
-				im_model = StableDiffusionXLPipeline.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, safety_checker=None)
+				im_model = model_loader.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file)
 			else:
-				im_model = FluxPipeline.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, safety_checker=None)
+				im_model = model_loader.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file, safety_checker=None)
 		
 		if vae_file != '':
 			vae_model = AutoencoderKL.from_single_file(vae_file, torch_dtype=im_torch_dtype, local_files_only=im_local_files)
 			im_model.vae = vae_model
-
+		
 		if device == "auto":
 			if torch.cuda.is_available() and not im_cpu_offload:
 				im_model = im_model.to("cuda")
@@ -1014,7 +1037,7 @@ def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file
 	return result
 
 def GenImage(image_prompt, neg_prompt="NONE", infer_steps=50, guidance=7.5, img_width="auto", img_height="auto", gen_mode=False):
-	global im_model, img_gen_mode
+	global im_model, img_gen_mode, orig_shdlr
 
 	if image_prompt == '': return -1
 	
@@ -1028,6 +1051,11 @@ def GenImage(image_prompt, neg_prompt="NONE", infer_steps=50, guidance=7.5, img_
 				break
 			
 		try:
+			if orig_shdlr != None:
+				im_model.unload_ip_adapter()
+				im_model.scheduler = orig_shdlr
+				orig_shdlr = None
+			
 			clean_prompt = image_prompt.strip(' ').replace("\n", ' ').replace("\r", '')
 
 			with torch.inference_mode():
@@ -1049,13 +1077,10 @@ def GenImage(image_prompt, neg_prompt="NONE", infer_steps=50, guidance=7.5, img_
 
 		try:
 			img_dir = work_dir+"/ai_images/"
-			if os.path.exists(img_dir):
-				img_num = CountFiles(img_dir)
-			else:
-				os.mkdir(img_dir)
-				img_num = 0
-
-			output.images[0].save(img_dir+"image_"+str(img_num)+".png")
+			if not os.path.exists(img_dir): os.mkdir(img_dir)
+			result = NewFileName(img_dir, "image_#NUM.png")
+			output.images[0].save(result["file"])
+			img_num = result["num"]
 		except:
 			print("ERROR: failed to save image", flush=True)
 			time.sleep(0.1)
@@ -1067,6 +1092,77 @@ def GenImage(image_prompt, neg_prompt="NONE", infer_steps=50, guidance=7.5, img_
 	ReserveVRAM()
 	
 	return img_num
+
+def GenImageIPA(image_prompt, guide_image=None, is_person=False):
+	global im_model, orig_shdlr
+	
+	if image_prompt == '': return "ERROR: prompt is empty"
+	
+	if is_person:
+		neg_prompt = default_neg_prompt + ', ' + person_neg_prompt
+	else:
+		neg_prompt = default_neg_prompt
+	
+	if guide_image == None:
+		img_num = GenImage(image_prompt, neg_prompt)
+		img_dir = work_dir+"/ai_images/"
+		return img_dir+"image_"+str(img_num)+".png"
+
+	CleanVRAM()
+	
+	if im_model == None and not LoadIMGModel(False):
+		return "ERROR: failed to load image model"
+	
+	if orig_shdlr == None:
+		try:
+			if is_person:
+				ipa_model_id = "h94/IP-Adapter"
+				ipa_subfolder = "models"
+				ipa_ckpt = "ip-adapter-full-face_sd15.safetensors"
+				if imodel_type == 1:
+					#ipa_subfolder = "sdxl_models"
+					#ipa_ckpt = "ip-adapter-plus-face_sdxl_vit-h.safetensors"
+					return "ERROR: SDXL Face IP-Adapter not yet supported"
+				elif imodel_type == 2:
+					return "ERROR: FLUX Face IP-Adapter not yet supported"
+			else:
+				ipa_model_id = "h94/IP-Adapter"
+				ipa_subfolder = "models"
+				ipa_ckpt = "ip-adapter_sd15.safetensors"
+				if imodel_type == 1:
+					ipa_subfolder = "sdxl_models"
+					ipa_ckpt = "ip-adapter_sdxl.safetensors"
+				elif imodel_type == 2:
+					return "ERROR: FLUX IP-Adapter not yet supported"
+			
+			orig_shdlr = im_model.scheduler
+			im_model.scheduler = DDIMScheduler.from_config(im_model.scheduler.config)
+			im_model.load_ip_adapter(ipa_model_id, subfolder=ipa_subfolder, weight_name=ipa_ckpt)
+			im_model.set_ip_adapter_scale(0.7)
+			if im_cpu_offload: im_model.enable_model_cpu_offload()
+		except:
+			return "ERROR: failed to load IP-Adapter"
+
+	try:
+		clean_prompt = image_prompt.strip(' ').replace("\n", ' ').replace("\r", '')
+		with torch.inference_mode():
+			ip_image = load_image(guide_image)
+			output = im_model(prompt=clean_prompt, negative_prompt=neg_prompt, num_inference_steps=50, ip_adapter_image=ip_image)
+	except:
+		return "ERROR: failed to generate image"
+
+	try:
+		img_dir = work_dir+"/ai_images/"
+		if not os.path.exists(img_dir): os.mkdir(img_dir)
+		result = NewFileName(img_dir, "image_#NUM.png")
+		output.images[0].save(result["file"])
+	except:
+		return "ERROR: failed to save image"
+
+	CleanVRAM()
+	ReserveVRAM()
+	
+	return result["file"]
 
 ###### CHAT STUFF ######
 	
@@ -1091,7 +1187,8 @@ def GetUserNames():
 		end_strings = None
 
 def InitPrompt(have_prompt=False):
-	global messages, prompt, init_prompt
+	global messages, prompt, init_prompt, redo_count
+	redo_count = 0
 	if have_prompt:
 		prompt = init_prompt
 	else:
@@ -1174,6 +1271,7 @@ def LoadModels():
 		LoadModel()
 		LoadIMGModel()
 
+LoadToolFuncs()
 LoadTTSVoices()
 LoadModels()
 LoadAvatar()
@@ -1190,6 +1288,36 @@ while (True):
 		continue	
 	elif msg == "close_chat":
 		break
+	elif msg == "new_game":
+		print("NEW_PROMPT:")
+		init_prompt = input()
+		InitPrompt(True)
+		NewGame()
+		continue
+	elif msg == "save_game":
+		print("SAVE_FILE:")
+		SaveGame(input(), messages, init_prompt)
+		continue
+	elif msg == "load_game":
+		print("SAVE_FILE:")
+		save_data = LoadGame(input())
+		init_prompt = save_data['sys_prompt']
+		InitPrompt(True)
+		messages = save_data['messages']
+		PrunePrompt()
+		if len(messages) > 0:
+			last_msg = messages[-1]
+			if "role" in last_msg and last_msg['role'] == bot_name:
+				if "content" in last_msg and isinstance(last_msg["content"], str):
+					print("BOT_NOANIM:"+last_msg["content"].replace("\n", "[AI_UI_BR]"), flush=True)
+				else:
+					print("BOT_NOANIM:Game loaded.", flush=True)
+			else:
+				print("BOT_NOANIM:Game loaded. WARNING: Roles have changed!", flush=True)
+		else:
+			print("BOT_NOANIM:Game loaded.", flush=True)
+		time.sleep(0.1)
+		continue
 	elif msg == "print_prompt":
 		print('----- START PROMPT -----')
 		print(prompt)
@@ -1298,6 +1426,15 @@ while (True):
 				else:
 					messages = [{"role":"system", "content":init_prompt}]
 		PrunePrompt()
+		continue
+	elif msg == "config_tools":
+		print("TOOL_CONFIG:")
+		temp_form = input()
+		tool_mode = input()
+		if use_tool_config:
+			use_chat_template = True if temp_form != "none" else False
+			use_tool_template = True if temp_form == "tool" else False
+		LoadToolFuncs()
 		continue
 	elif msg == "gen_image":
 		print("IMAGE_PROMPT:")
@@ -1429,7 +1566,14 @@ while (True):
 		InitPrompt()
 		continue
 	elif msg == "redo_last":
-		messages = messages[:-1:]
+		if redo_count == 0:
+			print("BOT_NOANIM:Unable to redo last response.", flush=True)
+			time.sleep(0.1)
+			continue
+		if redo_count < len(messages):
+			messages = messages[:-redo_count]
+		elif len(messages) > 0:
+			messages = [messages[0]]
 		PrunePrompt()
 		rando_lvl += rando_add
 	elif msg == "cont_chat":
@@ -1467,9 +1611,10 @@ while (True):
 	in_tokens = TokenizeChat()
 	response = GenText(in_tokens, temp).replace("\r", '')
 	responses = response.split("\n")
-	
+
 	response_error = ". . ."
 	got_res = False
+	redo_count = 0
 	r = 0
 
 	while (r < len(responses)):
@@ -1513,60 +1658,117 @@ while (True):
 				else:
 					break
 		
-		if enable_tooluse and "<tool_call>" in cmb_response:
-			try:
-				tc_result = None
-				tc_error = False
-				tc_list = cmb_response.split("<tool_call>")
-				tc_resp = ''
+		tc_response = ''
+		tc_errors = 0
+		
+		while enable_tooluse:
+			if not "<tool_call>" in cmb_response:
+				messages.append({"role":bot_name, "content":cmb_response})
+				tc_response += cmb_response
+				redo_count += 1
+				break
+			
+			tc_think = False
+			tc_result = None
+			tc_list = cmb_response.split("<tool_call>")
+			tc_resp = ''
+			
+			for tc_str in tc_list:
+				tc_parts = tc_str.strip().split("</tool_call>")
+				if len(tc_parts) < 1 or len(tc_parts) > 2: continue
 				
-				for tc_str in tc_list:
-					tc_str = tc_str.strip()
-					if not tc_str.endswith("</tool_call>"):
-						if not '"name":' in tc_str:
-							if tc_str != '': tc_resp += tc_str + "\n"
-							continue
-					
-					tc_arg_key = "arguments"
-					tc_json = StripEnd(tc_str, "</tool_call>")
-					tc_data = json.loads(tc_json)
-					
-					if "arguments" in tc_data and "name" in tc_data:
-						tool_call = { "name": tc_data["name"], "arguments": tc_data["arguments"] }
-					elif "parameters" in tc_data and "name" in tc_data:
-						tool_call = { "name": tc_data["name"], "arguments": tc_data["parameters"] }
-						tc_arg_key = "parameters"
-					elif "name" in tc_data:
-						tc_result = CallToolFunc(tc_data["name"], {})
-					else:
-						tc_error = True
+				if not '"name"' in tc_parts[0]:
+					if tc_parts[0] != '': tc_resp += tc_parts[0] + "\n"
+					continue
+				
+				tc_arg_key = "arguments"
+				tc_data = json.loads(tc_parts[0])
+				tc_error = False
+				tool_call = None
+				redo_count += 1
+				
+				if "arguments" in tc_data and "name" in tc_data:
+					tool_call = { "name": tc_data["name"], "arguments": tc_data["arguments"] }
+				elif "parameters" in tc_data and "name" in tc_data:
+					tool_call = { "name": tc_data["name"], "arguments": tc_data["parameters"] }
+					tc_arg_key = "parameters"
+				
+				if tool_call != None:
+					tc_result = tool_func(tc_data["name"], tc_data[tc_arg_key], { 'GenImageIPA': GenImageIPA })
+				elif "name" in tc_data:
+					tc_result = tool_func(tc_data["name"], {}, { 'GenImageIPA': GenImageIPA })
+					tool_call = { "name": tc_data["name"], "arguments": {} }
+				else:
+					tc_error = True
+					tc_errors += 1
+				
+				if use_tool_template and not tc_error:
+					messages.append({"role": bot_name, "tool_calls": [{"type": "function", "function": tool_call}]})
+				else:
+					messages.append({"role": bot_name, "content": "<tool_call>" + tc_parts[0] + "</tool_call>"})
+				
+				if tc_error:
+					tc_error = True
+					tc_errors += 1
+					redo_count += 1
 					
 					if use_tool_template:
-						messages.append({"role": bot_name, "tool_calls": [{"type": "function", "function": tool_call}]})
+						messages.append({"role": "tool", "name": "unknown", "content": "ERROR: unknown tool call format"})
 					else:
-						messages.append({"role": bot_name, "content": "<tool_call>" + tc_json + "</tool_call>"})
-					if tc_error:
-						messages.append({"role": "tool", "name": "unknown", "content": "Error: unknown tool call format"})
+						messages.append({"role": bot_name, "content": '<tool_response>{"name": "unknown", "content": "ERROR: unknown tool call format"}</tool_response>'})
+				
+				elif tc_result != None:
+						
+					if isinstance(tc_result, int) or isinstance(tc_result, float) or isinstance(tc_result, bool):
+						tc_result = str(tc_result)
+					elif not isinstance(tc_result, str):
+						tc_result = json.dumps(tc_result)
+					
+					if tc_result.startswith("ERROR:"):
+						tc_error = True
+						tc_errors += 1
+					
+					if tool_mode == "roleplay" and (tc_data["name"] == "show_image" or tc_data["name"] == "set_bio" or tc_data["name"] == "set_scene") and not tc_error:
+					
+						prompt_key = "prompt" if tc_data["name"] == "show_image" else "summary"
+						if tc_result != '' and tc_arg_key in tc_data and prompt_key in tc_data[tc_arg_key]:
+							tc_resp += "[img_box][img]"+tc_result+"[/img] Image prompt: "+tc_data[tc_arg_key][prompt_key]+"[/img_box]"
 					else:
-						tc_result = tc_result if tc_result != None else CallToolFunc(tc_data["name"], tc_data[tc_arg_key])
+						tc_think = True
+						redo_count += 1
+						
 						if use_tool_template:
 							messages.append({"role": "tool", "name": tc_data["name"], "content": tc_result})
 						else:
-							tc_result = '"'+tc_result+'"' if isinstance(tc_result, str) else tc_result
-							messages.append({"role": bot_name, "content": '<tool_response>{"name": "'+tc_data["name"]+'", "content": '+tc_result+'}</tool_response>'})
+							tc_result = tc_result.replace('\\"', '"').replace('"', '\\"')
+							messages.append({"role": bot_name, "content": '<tool_response>{"name": "'+tc_data["name"]+'", "content": "'+tc_result+'"}</tool_response>'})
 							#NOTE: the role should probably be 'tool' or 'system' in this case but most chat templates seem to ignore those roles here
 				
-				in_tokens = TokenizeChat()
-				if tc_resp == '':
-					cmb_response = GenText(in_tokens, temp).replace("\r", '').strip(" \n")
-				else:
-					cmb_response = tc_resp + GenText(in_tokens, temp).replace("\r", '').strip(" \n")
-			except:
-				response_error = "Error: bad tool call"
+				if len(tc_parts) > 1 and tc_parts[1].strip() != '':
+					tc_resp += tc_parts[1] + "\n"
+					messages.append({"role":bot_name, "content":tc_parts[1]})
+					redo_count += 1
+			
+			tc_resp = tc_resp.strip()
+			if tc_resp != '': tc_response += tc_resp + "\n"
+			
+			if tc_errors > 4 or (tc_error and tc_response != ''): 
+				if tc_response == '': tc_response = "ERROR: bad tool calls"
 				break
-
+			
+			if tc_think or tc_response == '':
+				in_tokens = TokenizeChat()
+				cmb_response = GenText(in_tokens, temp).replace("\r", '').strip(" \n")
+				continue
+			break
+		
+		if tc_response != '':
+			cmb_response = tc_response
+		else:
+			messages.append({"role":bot_name, "content":cmb_response})
+			redo_count += 1
+			
 		tts_response = cmb_response
-		messages.append({"role":bot_name, "content":cmb_response})
 		anim_done = False
 
 		if enable_bbcode:
@@ -1614,6 +1816,7 @@ while (True):
 	if not got_res:
 		print("BOT_NOANIM:"+response_error, flush=True)
 		messages.append({"role":bot_name, "content":response_error})
+		redo_count += 1
 		time.sleep(0.1)
 	
 	chat_files = []

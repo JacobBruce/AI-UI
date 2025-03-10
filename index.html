@@ -59,6 +59,16 @@
 							<button class="btn dialog_btn" onclick="ToggleEditPrompt()">CANCEL</button>
 						</div>
 					</div>
+					<div id="input_dialog" class="text_dialog hidden">
+						<div id="in_dialog_head" class="dialog_head">USER INPUT</div>
+						<div class="dialog_body">
+							<textarea id="input_txta" class="txt_area"></textarea>
+						</div>
+						<div class="dialog_foot">
+							<button id="in_accept_btn" class="btn dialog_btn" disabled>ACCEPT</button>
+							<button class="btn dialog_btn" onclick="ToggleInputDialog()">CANCEL</button>
+						</div>
+					</div>
 					<div id="input_box" class="hidden">
 						<div><label id="input_label">URL:</label><input type="text" id="user_input" name="user_input"><button id="input_btn" class="btn">OK</button></div>
 					</div>
@@ -74,7 +84,7 @@
 								<option value="multi" selected>Multi-modal</option>
 								<option value="rag">Retrieval-augmented generation (RAG)</option>
 							</select>
-							<button class="btn dialog_btn" onclick="ToggleAttachBox()">CLOSE</button>
+							<button id="attach_box_btn" class="btn dialog_btn" onclick="ToggleAttachBox()">CLOSE</button>
 							<button class="btn dialog_btn" onclick="ClearAttachments()">CLEAR</button>
 							<button class="btn dialog_btn" onclick="AttachLink()">ADD LINK</button>
 							<button class="btn dialog_btn" onclick="AttachFiles()">ADD FILE(S)</button>
@@ -142,6 +152,27 @@
 							<input type="number" id="typical_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
 							<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
 							<input type="number" id="rep_penalty" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
+						</div>
+						<div id="tool_config">
+							<span class="cfg_lbl">Template Format <img class="help_icon" width="16" height="16" title="Sets the chat log template. Tool Use models require a chat/tool template. This setting has no effect if use_tool_template or use_chat_template exist in the Model Setup arguments." /></span>
+							<select id="template_select" class="cfg_drp">
+								<option value="none" selected>None</option>
+								<option value="chat">Chat Template</option>
+								<option value="tool">Tool Template</option>
+							</select>
+							<span class="cfg_lbl">Tool Functions <img class="help_icon" width="16" height="16" title="Select which tool function file will be loaded." /></span>
+							<select id="tools_select" class="cfg_drp">
+								<option value="custom" selected>Custom (tool_funcs.py)</option>
+								<option value="roleplay">Roleplay (rp_funcs.py)</option>
+								<option value="research">Research (search_funcs.py)</option>
+								<option value="math">Math (math_funcs.py)</option>
+							</select>
+							<p id="tools_info"><small>You can create custom tool functions by modifying the tool_funcs.py file located inside the /engine/tools/ folder. You can also use some pre-made tool functions by selecting another option from the drop down menu.</small></p>
+							<div id="tool_btns" class="hidden">
+								<button id="save_game_btn" class="btn cfg_btn" onclick="SaveGame()" disabled>SAVE GAME</button>
+								<button id="load_game_btn" class="btn cfg_btn" onclick="LoadGame()" disabled>LOAD GAME</button>
+								<button id="new_game_btn" class="btn cfg_btn" onclick="NewGame()">NEW GAME</button>
+							</div>
 						</div>
 						<button id="apply_btn" class="btn cfg_btn" onclick="ApplyConfig()" disabled>APPLY</button>
 						<button id="adv_btn" class="btn cfg_btn" onclick="ToggleConfig()">AI SETTINGS</button>
@@ -388,7 +419,7 @@
 							<input type="text" id="start_rec_keys" class="cfg_txt keys_input" value="">
 						</div>
 						<div class="settings_col">
-							<span class="cfg_lbl">Enable Tool Use <img class="help_icon" width="16" height="16" title="Allow the chat bot to utilize the tool functions in /engine/tools/tool_funcs.py" /></span>
+							<span class="cfg_lbl">Enable Tool Use <img class="help_icon" width="16" height="16" title="Allow the chat bot to utilize tool functions." /></span>
 							<select id="tooluse_enable" class="cfg_drp">
 								<option value="1" selected>True</option>
 								<option value="0">False</option>
@@ -636,8 +667,8 @@
 					<p>Description: Enable CPU offloading for the image generation model to lower VRAM usage. Submodules of the model will be offloaded from the GPU to system memory when not in use. May reduce generation speed.</p>
 					<p>Valid Values: true, false</p><hr class="wide_hr">
 					
-					<h3>im_att_slicing <small class="arg_title">(default: true)</small></h3>
-					<p>Description: Enable attention slicing for the image generation model to lower VRAM usage. Splits the attention computations into steps instead of doing them all at once. The default value is false when using Stable Diffusion XL as it can adversely impact generation speed.</p>
+					<h3>im_att_slicing <small class="arg_title">(default: false)</small></h3>
+					<p>Description: Enable attention slicing for the image generation model to lower VRAM usage. Splits the attention computations into steps instead of doing them all at once.</p>
 					<p>Valid Values: true, false</p><hr class="wide_hr">
 					
 					<h3>im_from_single_file <small class="arg_title">(default: false)</small></h3>

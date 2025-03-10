@@ -140,7 +140,9 @@ function createWindow() {
 		}
 
 		if (itemCount > 0) menu.popup();
-	})
+	});
+	
+	win.webContents.send('set-platform', process.platform);
 }
 
 function getAppVersion() {
@@ -165,12 +167,21 @@ async function handleWavOpen() {
 	}
 }
 
-async function handleFileOpen() {
-	const { canceled, filePaths } = await dialog.showOpenDialog(win, {properties: ['openFile']});
+async function handleFileOpen(filters=[{ name: 'All Files', extensions: ['*'] }]) {
+	const { canceled, filePaths } = await dialog.showOpenDialog(win, {properties: ['openFile'], filters:filters});
 	if (canceled) {
 		return false;
 	} else {
 		return filePaths[0];
+	}
+}
+
+async function handleFileSave(filters=[{ name: 'All Files', extensions: ['*'] }]) {
+	const { canceled, filePath } = await dialog.showSaveDialog(win, {properties: ['showOverwriteConfirmation'], filters:filters});
+	if (canceled) {
+		return false;
+	} else {
+		return filePath;
 	}
 }
 
@@ -546,6 +557,44 @@ ipcMain.on('run-cmd', (event, payload) => {
 	}
 });
 
+ipcMain.on('start-game', (event, payload) => {
+	dialog.showMessageBox(win, { type: "question", title: "Confirm Action", 
+	noLink: true, message: "Starting a new game will clear the chat log. Proceed?", buttons: ["Confirm","Cancel"] }).then(value => {
+		if (!value.response) {
+			core.setPrompt(payload.prompt.replaceAll("\n", "[AI_UI_BR]"));
+			core.sendMsg('new_game');
+		}
+	});
+});
+
+ipcMain.on('game-save', (event, payload) => {
+	if (payload == 'load') {
+		dialog.showMessageBox(win, { type: "question", title: "Confirm Action", 
+		noLink: true, message: "Loading a game will clear the chat log. Proceed?", buttons: ["Confirm","Cancel"] }).then(value => {
+			if (!value.response) {
+				handleFileOpen([{ name: 'JSON File', extensions: ['json'] }]).then(fileResult => {
+					if (fileResult) {
+						core.setSaveFile(fileResult);
+						core.sendMsg('load_game');
+					}
+				});
+			}
+		});
+	} else {
+		handleFileSave([{ name: 'JSON File', extensions: ['json'] }]).then(fileResult => {
+			if (fileResult) {
+				if (fileResult.endsWith('.json')) {
+					core.setSaveFile(fileResult);
+				} else {
+					core.setSaveFile(fileResult+'.json');
+				}
+				core.sendMsg('save_game');
+				dialog.showMessageBox(win, { type: "info", message: "Game saved." });
+			}
+		});
+	}
+});
+
 // ---- CONFIG STUFF ----
 
 function SetRecShortcuts(start_shortcut, stop_shortcut) {
@@ -601,6 +650,12 @@ ipcMain.on('config-voice', (event, payload) => {
 ipcMain.on('config-ai', (event, payload) => {
 	core.configAI(payload);
 	core.sendMsg('config_ai');
+	win.webContents.send('load-config', {configs:core.getConfigs(), skip_inputs:true});
+});
+
+ipcMain.on('config-tools', (event, payload) => {
+	core.configTools(payload);
+	core.sendMsg('config_tools');
 	win.webContents.send('load-config', {configs:core.getConfigs(), skip_inputs:true});
 });
 

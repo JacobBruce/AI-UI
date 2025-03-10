@@ -31,3 +31,6 @@ numba
 yacs
 kornia
 facexlib
+arxiv
+wikipedia-api
+PyMuPDF

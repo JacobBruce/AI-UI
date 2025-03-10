@@ -2,7 +2,7 @@ const process = require('child_process');
 const fs = require('fs');
 
 var CHAT_CONFIG = { human_name: 'Human', bot_name: 'Bot', bot_voice: 0, speech_vol: 1.0, speech_rate: 200, pitch_shift: 0, talk_mode: 0, tts_mode: 0, anim_mode: 0 };
-var AI_CONFIG = { msg_mem: 5, max_res: 50, min_res: 1, base_temp: 0.8, prompt_p: 0, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0 };
+var AI_CONFIG = { msg_mem: 5, max_res: 50, min_res: 1, base_temp: 0.8, prompt_p: 0, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0, temp_format: 'none', tools_file: 'custom' };
 var APP_CONFIG = {
 	avatar_img: '', script_dir: '', python_bin: '', model_dir: '', sd_model: '', tts_model: '', sr_model: '', model_args: '', model_type: 0, imodel_type: 0, smodel_type: 0, comp_dev: 'auto', start_meth: 'text', //main
 	enable_bbcode: 1, enable_tooluse: 1, enable_devmode: 0, enable_asasro: 0, start_rec_keys: '', stop_rec_keys: '' //other
@@ -23,6 +23,7 @@ var CMD_STATE = 'STOPPED';
 var ENGINE_STATE = 'STOPPED';
 var CHAT_STATE = 'INIT';
 var CHAT_FILES = '';
+var SAVE_FILE = '';
 var CLONE_MODEL = '';
 var CLONE_SAMPLE = '';
 var CLONE_NAME = '';
@@ -85,6 +86,10 @@ function SetCloneVoice(voice) {
 	CLONE_TEXT = voice.transcript;
 }
 
+function SetSaveFile(save_file) {
+	SAVE_FILE = save_file;
+}
+
 function SetPrompt(new_prompt) {
 	INIT_PROMPT = new_prompt;
 }
@@ -104,6 +109,11 @@ function ConfigSpeech(speech_config) {
 	CHAT_CONFIG.pitch_shift = speech_config.pitch;
 	CHAT_CONFIG.tts_mode = speech_config.engine;
 	CHAT_CONFIG.anim_mode = speech_config.amode;
+}
+
+function ConfigTools(tools_config) {
+	AI_CONFIG.temp_format = tools_config.temp_format;
+	AI_CONFIG.tools_file = tools_config.tools_file;
 }
 
 function ConfigAI(ai_config) {
@@ -397,7 +407,11 @@ function StartScript() {
 		} else if (out_str == 'NEW_PROMPT:') {
 			CHAT_STATE = 'NEW_PROMPT';
 			LogToConsole('STDIN: '+INIT_PROMPT);
-			AI_ENGINE.stdin.write(INIT_PROMPT+ENDL);	
+			AI_ENGINE.stdin.write(INIT_PROMPT+ENDL);
+		} else if (out_str == 'SAVE_FILE:') {
+			CHAT_STATE = 'SAVE_FILE';
+			LogToConsole('STDIN: '+SAVE_FILE);
+			AI_ENGINE.stdin.write(SAVE_FILE+ENDL);
 		} else if (out_str == 'START_TEXT:') {
 			CHAT_STATE = 'START_TEXT';
 			LogToConsole('STDIN: '+GEN_CONFIG.prompt_text);
@@ -494,6 +508,12 @@ function StartScript() {
 			AI_ENGINE.stdin.write(AI_CONFIG.typical_p+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.rep_penalty);
 			AI_ENGINE.stdin.write(AI_CONFIG.rep_penalty+ENDL);
+		} else if (out_str == 'TOOL_CONFIG:') {
+			CHAT_STATE = 'TOOL_CONFIG';
+			LogToConsole('STDIN: '+AI_CONFIG.temp_format);
+			AI_ENGINE.stdin.write(AI_CONFIG.temp_format+ENDL);
+			LogToConsole('STDIN: '+AI_CONFIG.tools_file);
+			AI_ENGINE.stdin.write(AI_CONFIG.tools_file+ENDL);
 		} else if (out_str == 'APP_CONFIG:') {
 			CHAT_STATE = 'APP_CONFIG';
 			LogToConsole('STDIN: '+APP_CONFIG.script_dir);
@@ -594,6 +614,7 @@ module.exports = {
 	setPrompt: SetPrompt,
 	initAppConfig: InitAppConfig,
 	configSpeech: ConfigSpeech,
+	configTools: ConfigTools,
 	configAI: ConfigAI,
 	configApp: ConfigApp,
 	configOther: ConfigOther,
@@ -605,6 +626,7 @@ module.exports = {
 	setReadText: SetReadText,
 	setChatFiles: SetChatFiles,
 	setCloneVoice: SetCloneVoice,
+	setSaveFile: SetSaveFile,
 	engineRunning: EngineRunning,
 	runCommand: RunCommand
 };

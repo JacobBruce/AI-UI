@@ -8,13 +8,15 @@ const pygmalion_ip = "BOT_NAME's Persona: A helpful AI assistant who can use the
 const thinking_ip = "You are a helpful AI assistant who can think step by step before answering questions. You can put your thoughts inside the <think> and </think> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden and separated from your actual responses.";
 const thinking2_ip = "You are a helpful AI assistant who can think step by step before answering questions. You can put your thoughts inside the <thoughts> and </thoughts> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden and separated from your actual responses.";
 const bbcode_ip = "You can use BBCode tags to format text and embed media such as images and videos into your messages.\nUse [b], [i], [u], and [s] to make text bold, italic, underlined, or striked-through. Example: [b]this is bold text[/b]\nUse [h1], [h2], [h3], [h4], [h5], and [h6] for headings. Example: [h3]this is a heading[/h3]\nUse the [hr] tag to insert a horizontal rule. Example: this is above the line[hr]this is below\nUse the [center] tag to horizontally center text and other content. Example [center]this is centered text[/center]\nUse the [quote] tag for quoting text. Example: [quote]this is a quote[/quote]\nUse the [spoiler] tag for hiding spoiler text and other content. Example: [spoiler]this is a spoiler[/spoiler]\nUse the [pre] tag to post preformatted text. Example: [pre]this is preformatted text[/pre]\nUse the [ol] and [ul] tags for ordered and unordered lists. Use [li] or [*] for list items. Example: [ol][*]item1[*]item2[/ol]\nUse the [url] tag to post a link. Example: [url=http://test.com]this is a link[/url]\nUse the [code] tag to post a code snippet. Example: [code=C++]int abc = 123;[/code]\nUse the [video] and [audio] tags to post a video or audio file. Example: [video]http://test.com/vid.mp4[/video]\nUse the [youtube] tag to post a youtube video with just the video ID. Example: [youtube]5eqRuVp65eY[/youtube]\nUse the [img] tag to post an image. Example: [img]http://test.com/pic.png[/img]\nUse the [ai_img] tag to generate an image from a description using AI. Example: [ai_img]cute kitten[/ai_img]";
-var tooluse_ip = "You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools:\n<tools>{tool_funcs}</tools>\n\nFor each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>";
-var tooluse2_ip = "You are an expert in composing functions. You are given a question and a set of possible functions. Based on the question, you will need to make one or more function/tool calls to achieve the purpose. If none of the function can be used, point it out. If the given question lacks the parameters required by the function, also point it out.\n\nIf you decide to invoke any of the function(s), you MUST put it in this format:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>\n\nHere is a list of functions in JSON format that you can invoke:\n{tool_funcs}";
+const tooluse_ip = "You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools:\n<tools>{tool_funcs}</tools>\n\nFor each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>";
+const tooluse2_ip = "You are an expert in composing functions. You are given a question and a set of possible functions. Based on the question, you will need to make one or more function/tool calls to achieve the purpose. If none of the function can be used, point it out. If the given question lacks the parameters required by the function, also point it out.\n\nIf you decide to invoke any of the function(s), you MUST put it in this format:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>\n\nHere is a list of functions in JSON format that you can invoke:\n{tool_funcs}";
+const roleplay_ip = "You are a role-playing AI designed to provide immersive text adventures. You will act as game master by guiding the story of the player with thrilling and creative scenarios. You have a diverse set of tool functions available to help you manage the roleplay world. For example if the player travels to a new location you should call the set_scene function. If the player meets a character for the first time you can call set_bio. If the player wants to put an item in their inventory you can call store_item. Only call a function if it makes logical sense. Think through problems step by step if necessary. You can put your thoughts inside the <think> and </think> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden from the player.";
+
 var ip_vals = { chat:'', pygmalion:'', think:'', think2:'', tools:'', tools2:'', bbcode:'' };
 
 const bb_code_tags = [
-	"B", "b", "I", "i", "U", "u", "S", "s", "OL", "ol", "UL", "ul", "LI", "li", "IMG", "img", "PRE", "pre", 
-	"H1", "h1", "H2", "h2", "H3", "h3", "H4", "h4", "H5", "h5", "H6", "h6", "URL", "url", "CODE", "code", 
+	"B", "b", "I", "i", "U", "u", "S", "s", "OL", "ol", "UL", "ul", "LI", "li", "IMG", "img", "IMG_BOX", "img_box", 
+	"H1", "h1", "H2", "h2", "H3", "h3", "H4", "h4", "H5", "h5", "H6", "h6", "URL", "url", "CODE", "code", "PRE", "pre",
 	"CENTER", "center", "SPOILER", "spoiler", "QUOTE", "quote", "AUDIO", "audio", "VIDEO", "video", "YOUTUBE", "youtube"
 ];
 
@@ -37,6 +39,8 @@ var cmd_index = 0;
 var max_ip_len = 256;
 var last_gen_mode = 0;
 var last_gen_voice = 0;
+var config_state = 0;
+var is_windows = true;
 var btn_state = true;
 var recording = false;
 var thinking = false;
@@ -45,7 +49,6 @@ var asr_pending = false;
 var chat_exp = false;
 var gen_exp = false;
 var tts_exp = false;
-var adv_show = false;
 var sys_voices = [];
 var ai_voices = [];
 var cmd_list = [];
@@ -74,6 +77,8 @@ var top_k = 50;
 var top_p = 1.0;
 var typical_p = 1.0;
 var rep_penalty = 1.0;
+var temp_format = 'none';
+var tools_file = 'custom';
 
 var model_type = 0;
 var imodel_type = 0;
@@ -290,6 +295,7 @@ function ConvertBB(txt) {
 		replaceAll('[SPOILER=', '</p><details><summary onclick="ToggleDetails(this)">').replaceAll('_SPOILER]', '</summary><hr class="chat_hr">').
 		replaceAll('[SPOILER END]', '</details><p class="msg_p">').
 		replaceAll('[CENTER]', '</p><center>').replaceAll('[CENTER END]', '</center><p class="msg_p">').
+		replaceAll("[IMG_BOX]", '</p><div class="img_box"><p class="msg_p">').replaceAll('[IMG_BOX END]', '</p></div><p class="msg_p">').
 		replaceAll("[IMG]", '</p><img class="chat_img" src="').replaceAll('[IMG END]', '" onclick="ShowImage(this)"><p class="msg_p">').
 		replaceAll('[CODE]', '</p><pre class="code_box"><code>').replaceAll('[CODE END]', '</code></pre><p class="msg_p">').
 		replaceAll('[CODE=', '</p><pre class="code_box"><code class="language-').replaceAll('_CODE]', '">').
@@ -404,6 +410,14 @@ function CleanFilename(filename) {
 		replaceAll('%', '').replaceAll('&', '').replaceAll('{', '').replaceAll('}', '').replaceAll('<', '').replaceAll('>', '').
 		replaceAll('$', '').replaceAll('!', '').replaceAll('@', '').replaceAll(':', '').replaceAll('*', '').replaceAll('+', '').
 		replaceAll('=', '').replaceAll('|', '').replaceAll('`', '').replaceAll('"', '').replaceAll("'", '').trim(), '.'),'-'),'_');
+}
+
+function StripFileProto(filename) {
+	if (is_windows) {
+		return filename.replace('file:///', '').replace('file://', '');
+	} else {
+		return filename.replace('file://', '');
+	}
 }
 
 // ---- PAGES ----
@@ -538,8 +552,12 @@ function DisableButtons(bool_val, load_state=false) {
 	$('#clone_voice_btn').prop('disabled', bool_val);
 	$('#img_btn').prop('disabled', bool_val);
 	$('#edit_btn').prop('disabled', bool_val);
-	$('#attach_btn').prop('disabled', bool_val);
 	$('#mic_btn').prop('disabled', bool_val);
+	$('#attach_btn').prop('disabled', bool_val);
+	$('#attach_box_btn').prop('disabled', bool_val);
+	$('#in_accept_btn').prop('disabled', bool_val);
+	$('#save_game_btn').prop('disabled', bool_val);
+	$('#load_game_btn').prop('disabled', bool_val);
 	$('.config_btn').prop('disabled', bool_val);
 }
 
@@ -750,6 +768,32 @@ function FileDragDrop(e) {
 
 function FileDragOver(e) {
 	e.preventDefault();
+}
+
+function LoadGame() {
+	ipcRenderer.send('game-save', 'load');
+}
+
+function SaveGame() {
+	ipcRenderer.send('game-save', 'save');
+}
+
+function StartGame() {
+	if (temp_format == 'tool') {
+		ipcRenderer.send('start-game', { prompt: roleplay_ip+"\n\n"+$('#input_txta').val() });
+	} else {
+		ipcRenderer.send('start-game', { prompt: ip_vals.tools+"\n\n"+roleplay_ip+"\n\n"+$('#input_txta').val() });
+	}
+}
+
+function NewGame() {
+	if (tools_file != 'roleplay') {
+		ipcRenderer.send('show-alert', { msg: 'You must apply the new settings to use the roleplay tool functions.' });
+	} else if (temp_format == 'none') {
+		ipcRenderer.send('show-alert', { msg: 'Template Format must be set to Chat Template or Tool Template (make sure to apply changes).' });
+	} else {
+		ToggleInputDialog(StartGame, 'START NEW GAME', 'Enter a brief description of your character and the setting for your roleplay world.');
+	}
 }
 
 // ---- TEXT GEN ----
@@ -977,8 +1021,7 @@ function CopyGenImg() {
 	if (gen_img === null) {
 		ipcRenderer.send('show-alert', { msg: "There is no image to copy!" });
 	} else {
-		gen_img = $(gen_img).prop('src').
-			replace('file:///', '').replace('file://', '');
+		gen_img = StripFileProto($(gen_img).prop('src'));
 		ipcRenderer.send('copy-image', { img: gen_img });
 	}
 }
@@ -1109,6 +1152,14 @@ ipcRenderer.on('ai-ready', (event, payload) => {
 	DisableButtons(false, true);
 	StopThinking();
 	StopGenerating();
+});
+
+ipcRenderer.on('set-platform', (event, payload) => {
+	if (payload.startsWith('win')) {
+		is_windows = true;
+	} else {
+		is_windows = false;
+	}
 });
 
 ipcRenderer.on('start-recording', (event, payload) => {
@@ -1310,6 +1361,8 @@ ipcRenderer.on('load-config', (event, payload) => {
 	top_p = ai_config.top_p;
 	typical_p = ai_config.typical_p;
 	rep_penalty = ai_config.rep_penalty;
+	temp_format = ai_config.temp_format;
+	tools_file = ai_config.tools_file;
 	
 	tts_voice = gen_config.tts_voice;
 	
@@ -1364,6 +1417,8 @@ ipcRenderer.on('load-config', (event, payload) => {
 	$('#top_p').val(top_p);
 	$('#typical_p').val(typical_p);
 	$('#rep_penalty').val(rep_penalty);
+	$('#template_select').val(temp_format);
+	$('#tools_select').val(tools_file);
 
 	$('#ttsgen_mode').val(gen_config.tts_mode);
 	$('#tts_voices').val(gen_config.tts_voice);
@@ -1395,6 +1450,8 @@ ipcRenderer.on('load-config', (event, payload) => {
 	}
 	
 	$('#tmode_img').prop('src', './img/talk_'+talk_mode+'.png');
+	
+	SelectTools($('#tools_select').find(':selected').val());
 });
 
 function ApplySettings() {
@@ -1437,7 +1494,7 @@ function ApplySettings() {
 }
 
 function ApplyConfig() {
-	if (adv_show) {
+	if (config_state == 1) {
 		const maxmm = $('#max_msg_mem').val();
 		const maxrl = $('#max_res_len').val();
 		const minrl = $('#min_res_len').val();
@@ -1453,6 +1510,14 @@ function ApplyConfig() {
 				max_mmem: maxmm, max_rlen: maxrl, min_rlen: minrl, temp: btemp, 
 				tk: topk, tp: topp, typ: typp, rp: repp, pp: promptp
 			});
+			ipcRenderer.send('show-alert', { msg: 'New settings applied.' });
+		}
+	} else if (config_state == 2) {
+		const tempf = $('#template_select').find(':selected').val();
+		const toolf = $('#tools_select').find(':selected').val();
+		
+		if (temp_format != tempf || tools_file != toolf) {
+			ipcRenderer.send('config-tools', { temp_format: tempf, tools_file: toolf });
 			ipcRenderer.send('show-alert', { msg: 'New settings applied.' });
 		}
 	} else {
@@ -1484,16 +1549,22 @@ function ApplyConfig() {
 }
 
 function ToggleConfig() {
-	if (adv_show) {
+	if (config_state == 2) {
 		$('#adv_btn').html('AI SETTINGS');
-		$('#adv_config').hide();
+		$('#tool_config').hide();
 		$('#basic_config').show();
-	} else {
+		config_state = 0;
+	} else if (config_state == 1) {
 		$('#adv_btn').html('MAIN SETTINGS');
+		$('#adv_config').hide();
+		$('#tool_config').show();
+		config_state = 2;
+	} else {
+		$('#adv_btn').html('TOOL SETTINGS');
 		$('#basic_config').hide();
 		$('#adv_config').show();
+		config_state = 1;
 	}
-	adv_show = !adv_show;
 }
 
 function ShowInstallHelp() {
@@ -1529,6 +1600,22 @@ function ShowOtherConfig() {
 		$('#main_settings').hide();
 		$('#other_conf_btn').css('color', '#c4c4cf');
 		$('#main_conf_btn').css('color', '#868687');
+	}
+}
+
+function ToggleInputDialog(click_func, dialog_title, placeholder_txt='') {
+	if ($('#input_dialog').is(":hidden")) {
+		$('#in_dialog_head').html(dialog_title);
+		$('#input_txta').attr("placeholder", placeholder_txt);
+		$('#in_accept_btn').off('click').on('click', function(e) {
+			e.preventDefault();
+			ToggleInputDialog();
+			click_func();
+		});
+		$('#input_dialog').show();
+		$('#input_txta').focus();
+	} else {
+		$('#input_dialog').hide();
 	}
 }
 
@@ -1636,20 +1723,18 @@ function ShowInFolder(elem) {
 		if (elem == 'TTS_EMBEDS') {
 			file_path = script_dir+'/embeddings/';
 		} else {
-			file_path = elem.replace('file:///', '').replace('file://', '');
+			file_path = StripFileProto(elem);
 			file_path = file_path.substr(0, file_path.indexOf('?'));
 		}
 	} else {
-		file_path = $(elem).prop('src').
-			replace('file:///', '').replace('file://', '');
+		file_path = StripFileProto($(elem).prop('src'));
 	}
 
 	ipcRenderer.send('show-in-dir', file_path);
 }
 
 function ShowImage(elem) {
-	let file_path = $(elem).prop('src').
-		replace('file:///', '').replace('file://', '');
+	let file_path = StripFileProto($(elem).prop('src'));
 	
 	if (file_path != '')
 		ipcRenderer.send('show-img', file_path);
@@ -1710,6 +1795,25 @@ function ShortcutKeyUp(input_id, key_str, key_code) {
 		held_keys[1] = null;
 	}
 	UpdateHeldKeys(input_id);
+}
+
+function SelectTools(tool_mode) {
+	$('#tool_btns').hide();
+	switch (tool_mode) {
+	case 'custom':
+		$('#tools_info').html("<small>You can create custom tool functions by modifying the tool_funcs.py file located inside the /engine/tools/ folder. You can also use some pre-made tool functions by selecting another option from the drop down menu.</small>");
+		break;
+	case 'roleplay':
+		$('#tools_info').html("<small>This provides many tools to help the bot create immersive roleplay experiences. Ensure you have set up the image generation model so the bot can generate images of scenes and characters in the roleplay world.</small>");
+		$('#tool_btns').show();
+		break;
+	case 'research':
+		$('#tools_info').html("<small>This provides some tools for searching online resources such as Wikipedia and arXiv. These tools can help the bot retrieve up-to-date information and conduct research.</small>");
+		break;
+	case 'math':
+		$('#tools_info').html("<small>This tool file has some basic math functions which can be used to help language models make more accurate calculations.</small>");
+		break;
+	}
 }
 
 function RestartScript() {
@@ -1849,8 +1953,7 @@ $(document).ready(function() {
 	});
 	
 	$('#ip_select').on('change', function() {
-		let ip_sel = $(this).find(':selected').val();
-		switch (ip_sel) {
+		switch ($(this).find(':selected').val()) {
 		case 'default':
 			$('#prompt_txta').val(ip_vals.chat);
 			break;
@@ -1876,8 +1979,7 @@ $(document).ready(function() {
 	});
 	
 	$('#is_select').on('change', function() {
-		let is_sel = $(this).find(':selected').val();
-		switch (is_sel) {
+		switch ($(this).find(':selected').val()) {
 		case 'auto':
 			$('#is_input_box').hide();
 			break;
@@ -1885,6 +1987,10 @@ $(document).ready(function() {
 			$('#is_input_box').show();
 			break;
 		}
+	});
+	
+	$('#tools_select').on('change', function() {
+		SelectTools($(this).find(':selected').val());
 	});
 	
 	$('#tts_mode').on('change', function() {
@@ -1912,8 +2018,7 @@ $(document).ready(function() {
 	});
 	
 	$('#vclone_mode').on('change', function() {
-		let mode_sel = $(this).find(':selected').val();
-		if (mode_sel == 1) {
+		if ($(this).find(':selected').val() == 1) {
 			$('#ts_txt_row').show();
 		} else {
 			$('#ts_txt_row').hide();
