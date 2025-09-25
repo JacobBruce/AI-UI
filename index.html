@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <title>AI UI</title>
     <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';" />
-	<link rel="stylesheet" href="styles.css">
-	<link rel="stylesheet" href="highlight.css">
+	<link rel="stylesheet" href="./css/styles.css">
+	<link rel="stylesheet" href="./css/highlight.css">
+	<link rel="stylesheet" href="./node_modules/katex/dist/katex.min.css">
 	<script src="./index.js"></script>
 </head>
 <body>
@@ -48,12 +49,12 @@
 							<label id="ips_label">Useful Prompts:</label>
 							<select id="ip_select" class="cfg_drp">
 								<option value="default" selected>Default</option>
+								<option value="think2">Assistant</option>
+								<option value="research">Researcher</option>
 								<option value="tools">Tool Use</option>
 								<option value="tools2">Tool Use (alt)</option>
-								<option value="pygmalion">Pygmalion Format</option>
+								<option value="think">AI XML Instructions</option>
 								<option value="bbcode">BBCode Instructions</option>
-								<option value="think">Chain-of-Thought</option>
-								<option value="think2">Chain-of-Thought (alt)</option>
 							</select>
 							<button class="btn dialog_btn" onclick="ApplyNewPrompt()">APPLY</button>
 							<button class="btn dialog_btn" onclick="ToggleEditPrompt()">CANCEL</button>
@@ -104,7 +105,7 @@
 						<button id="tmode_btn" class="config_btn" onclick="ChangeTalkMode()" disabled><img id="tmode_img" width="42" height="42" src="./img/talk_0.png" /></button>
 						<button id="avatar_btn" class="config_btn" onclick="ChangeAvatar()" disabled><img width="42" height="42" src="./img/folder_b.png" /></button>
 					</div>
-					<center id="config_box">
+					<center id="chat_cbox" class="config_box">
 						<div id="basic_config">
 							<span class="cfg_lbl">Usernames / Roles</span>
 							<input type="text" id="user_name" class="cfg_usr" placeholder="Human Name">
@@ -128,22 +129,33 @@
 							<input type="range" id="speech_rate" class="cfg_sld" min="1" max="400" value="200">
 							<span class="cfg_lbl">Speech Pitch</span>
 							<input type="range" id="speech_pitch" class="cfg_sld" min="-11" max="10" value="0">
+							<br><br>
 						</div>
 						<div id="adv_config">
-							<span class="cfg_lbl">Max Message Memory <img class="help_icon" width="16" height="16" title="The number of messages the AI will remember. Higher values allow the AI to have a longer memory but will also increase the response time." /></span>
-							<input type="number" id="max_msg_mem" class="cfg_num" min="2" max="100" value="5">
-							<span class="cfg_lbl">Max Response Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate in each response. A token is like a word but spaces and other symbols may be considered a token." /></span>
-							<input type="number" id="max_res_len" class="cfg_num" min="1" max="1000" value="50">
-							<span class="cfg_lbl">Min Response Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate in each response. A token is like a word but spaces and other symbols may be considered a token." /></span>
-							<input type="number" id="min_res_len" class="cfg_num" min="1" max="999" value="1">
-							<span class="cfg_lbl">Base Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable. The engine may briefly increase this value in some situations (e.g. using the REDO button)." /></span>
-							<input type="number" id="base_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
 							<span class="cfg_lbl">Prompt Persistence <img class="help_icon" width="16" height="16" title="Controls whether the system prompt will be limited to the message memory or permanently included at the start of the actual prompt which is fed to the AI." /></span>
 							<select id="pp_select" class="cfg_drp">
 								<option value="0" selected>Memory Limited</option>
 								<option value="1">Permanent</option>
 								<option value="2">No Prompt</option>
 							</select>
+							<span class="cfg_lbl">Max Message Memory <img class="help_icon" width="16" height="16" title="The number of messages the AI will remember. Higher values allow the AI to have a longer memory but will also increase the response time." /></span>
+							<input type="number" id="max_msg_mem" class="cfg_num" min="2" max="10000" value="10">
+							<span class="cfg_lbl">Max Response Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate in each response. A token is like a word but spaces and other symbols may be considered a token." /></span>
+							<input type="number" id="max_res_len" class="cfg_num" min="1" max="100000" value="1000">
+							<span class="cfg_lbl">Min Response Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate in each response. A token is like a word but spaces and other symbols may be considered a token." /></span>
+							<input type="number" id="min_res_len" class="cfg_num" min="1" max="10000" value="1">
+							<h4 class="cfg_title">ADVANCED SETTINGS</h4>
+							<span class="cfg_lbl">Enable Sampling <img class="help_icon" width="16" height="16" title="Whether or not to use sampling. Uses greedy decoding if sampling is disabled." /></span>
+							<select id="ds_select" class="cfg_drp">
+								<option value="1" selected>True</option>
+								<option value="0">False</option>
+							</select>
+							<span class="cfg_lbl">Number of Beams <img class="help_icon" width="16" height="16" title="The number of beams for beam search. A value of 1 means no beam search." /></span>
+							<input type="number" id="num_beams" class="cfg_num" min="1" max="100" step="1" value="1">
+							<span class="cfg_lbl">Beam Groups <img class="help_icon" width="16" height="16" title="The number of groups to divide beams into in order to ensure diversity among different groups of beams." /></span>
+							<input type="number" id="beam_groups" class="cfg_num" min="1" max="100" step="1" value="1">
+							<span class="cfg_lbl">Base Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable. The engine may briefly increase this value in some situations (e.g. using the REDO button)." /></span>
+							<input type="number" id="base_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
 							<span class="cfg_lbl">Top-K <img class="help_icon" width="16" height="16" title="Only samples from the most probable K vocabulary tokens. Set to 0 to disable Top-K sampling." /></span>
 							<input type="number" id="top_k" class="cfg_num" min="0" max="1000" value="50">
 							<span class="cfg_lbl">Top-p <img class="help_icon" width="16" height="16" title="Only the smallest set of most probable tokens with probabilities that add up to this value or higher are kept for generation." /></span>
@@ -152,6 +164,7 @@
 							<input type="number" id="typical_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
 							<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
 							<input type="number" id="rep_penalty" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
+							<br><br>
 						</div>
 						<div id="tool_config">
 							<span class="cfg_lbl">Template Format <img class="help_icon" width="16" height="16" title="Sets the chat log template. Tool Use models require a chat/tool template. This setting has no effect if use_tool_template or use_chat_template exist in the Model Setup arguments." /></span>
@@ -166,6 +179,7 @@
 								<option value="roleplay">Roleplay (rp_funcs.py)</option>
 								<option value="research">Research (search_funcs.py)</option>
 								<option value="math">Math (math_funcs.py)</option>
+								<option value="merge">Merged (merge_funcs.py)</option>
 							</select>
 							<p id="tools_info"><small>You can create custom tool functions by modifying the tool_funcs.py file located inside the /engine/tools/ folder. You can also use some pre-made tool functions by selecting another option from the drop down menu.</small></p>
 							<div id="tool_btns" class="hidden">
@@ -197,24 +211,35 @@
 				</div>
 				
 				<div id="txtgen_side">
-					<center>
-						<h4 class="cfg_title">GENERATION SETTINGS</h4>
-						<span class="cfg_lbl">Max Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
-						<input type="number" id="gen_max_len" class="cfg_num" min="1" max="10000" value="50">
-						<span class="cfg_lbl">Min Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
-						<input type="number" id="gen_min_len" class="cfg_num" min="1" max="999" value="1">
-						<span class="cfg_lbl">Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable." /></span>
-						<input type="number" id="gen_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
-						<h4 class="cfg_title">ADVANCED SETTINGS</h4>
-						<span class="cfg_lbl">Top-K <img class="help_icon" width="16" height="16" title="Only samples from the most probable K vocabulary tokens. Set to 0 to disable Top-K sampling." /></span>
-						<input type="number" id="gen_top_k" class="cfg_num" min="0" max="1000" value="50">
-						<span class="cfg_lbl">Top-p <img class="help_icon" width="16" height="16" title="Only the smallest set of most probable tokens with probabilities that add up to this value or higher are kept for generation." /></span>
-						<input type="number" id="gen_top_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
-						<span class="cfg_lbl">Typical-p <img class="help_icon" width="16" height="16" title="Only the smallest set of the most locally typical tokens with probabilities that add up to this value or higher are kept for generation." /></span>
-						<input type="number" id="gen_typ_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
-						<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
-						<input type="number" id="gen_rep_p" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
-						
+					<center id="txtgen_cbox" class="config_box">
+						<div id="txtgen_config">
+							<h4 class="cfg_title">GENERATION SETTINGS</h4>
+							<span class="cfg_lbl">Max Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
+							<input type="number" id="gen_max_len" class="cfg_num" min="1" max="100000" value="1000">
+							<span class="cfg_lbl">Min Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
+							<input type="number" id="gen_min_len" class="cfg_num" min="1" max="10000" value="1">
+							<span class="cfg_lbl">Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable." /></span>
+							<input type="number" id="gen_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
+							<h4 class="cfg_title">ADVANCED SETTINGS</h4>
+							<span class="cfg_lbl">Enable Sampling <img class="help_icon" width="16" height="16" title="Whether or not to use sampling. Uses greedy decoding if sampling is disabled." /></span>
+							<select id="gds_select" class="cfg_drp">
+								<option value="1" selected>True</option>
+								<option value="0">False</option>
+							</select>
+							<span class="cfg_lbl">Number of Beams <img class="help_icon" width="16" height="16" title="The number of beams for beam search. A value of 1 means no beam search." /></span>
+							<input type="number" id="gen_num_beams" class="cfg_num" min="1" max="100" step="1" value="1">
+							<span class="cfg_lbl">Beam Groups <img class="help_icon" width="16" height="16" title="The number of groups to divide beams into in order to ensure diversity among different groups of beams." /></span>
+							<input type="number" id="gen_beam_groups" class="cfg_num" min="1" max="100" step="1" value="1">
+							<span class="cfg_lbl">Top-K <img class="help_icon" width="16" height="16" title="Only samples from the most probable K vocabulary tokens. Set to 0 to disable Top-K sampling." /></span>
+							<input type="number" id="gen_top_k" class="cfg_num" min="0" max="1000" value="50">
+							<span class="cfg_lbl">Top-p <img class="help_icon" width="16" height="16" title="Only the smallest set of most probable tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+							<input type="number" id="gen_top_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+							<span class="cfg_lbl">Typical-p <img class="help_icon" width="16" height="16" title="Only the smallest set of the most locally typical tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+							<input type="number" id="gen_typ_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+							<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
+							<input type="number" id="gen_rep_p" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
+							<br><br>
+						</div>
 						<button id="copy_txt_btn" class="btn cfg_btn" onclick="CopyGenTxt()">COPY TO CLIPBOARD</button>
 						<button id="read_txt_btn" class="btn cfg_btn" onclick="ReadGenTxt()" disabled>TEXT TO SPEECH</button>
 					</center>
@@ -238,36 +263,38 @@
 				</div>
 				
 				<div id="ttsgen_side">
-					<center>
-						<h4 class="cfg_title">SPEECH SETTINGS</h4>
-						<span class="cfg_lbl">Speech Engine</span>
-						<select id="ttsgen_mode" class="cfg_drp">
-							<option value="0" selected>System TTS</option>
-							<option value="1">AI Model</option>
-						</select>
-						<span class="cfg_lbl">Speech Voice</span>
-						<select id="tts_voices" class="cfg_drp"></select>
-						<span class="cfg_lbl">Speech Volume</span>
-						<input type="range" id="tts_speech_vol" class="cfg_sld" min="0.05" max="1.0" step="0.05" value="1.0">
-						<span class="cfg_lbl">Speech Rate</span>
-						<input type="range" id="tts_speech_rate" class="cfg_sld" min="1" max="400" value="200">
-						<span class="cfg_lbl">Speech Pitch</span>
-						<input type="range" id="tts_speech_pitch" class="cfg_sld" min="-11" max="10" value="0">
-						<h4 class="cfg_title">VOICE CLONING</h4>
-						<span class="cfg_lbl">Cloning Model <img class="help_icon" width="16" height="16" title="The model used for extracting speaker embeddings from an audio sample." /></span>
-						<select id="vclone_mode" class="cfg_drp">
-							<option value="0">SpeechBrain/SpeechT5 (16khz)</option>
-							<option value="1">ChatTTS (24khz)</option>
-						</select>
-						<div id="ts_txt_row" class="hidden">
-							<span class="cfg_lbl">Transcript <img class="help_icon" width="16" height="16" title="Text transcript of the speech in the Voice Sample audio file." /></span>
-							<input type="text" id="transcript" class="cfg_txt">
+					<center id="ttsgen_cbox" class="config_box">
+						<div id="ttsgen_config">
+							<h4 class="cfg_title">SPEECH SETTINGS</h4>
+							<span class="cfg_lbl">Speech Engine</span>
+							<select id="ttsgen_mode" class="cfg_drp">
+								<option value="0" selected>System TTS</option>
+								<option value="1">AI Model</option>
+							</select>
+							<span class="cfg_lbl">Speech Voice</span>
+							<select id="tts_voices" class="cfg_drp"></select>
+							<span class="cfg_lbl">Speech Volume</span>
+							<input type="range" id="tts_speech_vol" class="cfg_sld" min="0.05" max="1.0" step="0.05" value="1.0">
+							<span class="cfg_lbl">Speech Rate</span>
+							<input type="range" id="tts_speech_rate" class="cfg_sld" min="1" max="400" value="200">
+							<span class="cfg_lbl">Speech Pitch</span>
+							<input type="range" id="tts_speech_pitch" class="cfg_sld" min="-11" max="10" value="0">
+							<h4 class="cfg_title">VOICE CLONING</h4>
+							<span class="cfg_lbl">Cloning Model <img class="help_icon" width="16" height="16" title="The model used for extracting speaker embeddings from an audio sample." /></span>
+							<select id="vclone_mode" class="cfg_drp">
+								<option value="0">SpeechBrain/SpeechT5 (16khz)</option>
+								<option value="1">ChatTTS (24khz)</option>
+							</select>
+							<div id="ts_txt_row" class="hidden">
+								<span class="cfg_lbl">Transcript <img class="help_icon" width="16" height="16" title="Text transcript of the speech in the Voice Sample audio file." /></span>
+								<input type="text" id="transcript" class="cfg_txt">
+							</div>
+							<span class="cfg_lbl">Voice Sample <img class="help_icon" width="16" height="16" title="A .wav file containing around 10 seconds of speech by the voice to be cloned. Sample should have minimal background noise." /></span>
+							<input type="text" id="voice_sample" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenSample('voice_sample')">BROWSE</button>
+							<span class="cfg_lbl">Voice Name <img class="help_icon" width="16" height="16" title="Choose a name for the cloned voice (e.g. British Male 1) so you can select it from the list of voices." /></span>
+							<input type="text" id="voice_name" class="cfg_txt">
+							<br><br>
 						</div>
-						<span class="cfg_lbl">Voice Sample <img class="help_icon" width="16" height="16" title="A .wav file containing around 10 seconds of speech by the voice to be cloned. Sample should have minimal background noise." /></span>
-						<input type="text" id="voice_sample" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenSample('voice_sample')">BROWSE</button>
-						<span class="cfg_lbl">Voice Name <img class="help_icon" width="16" height="16" title="Choose a name for the cloned voice (e.g. British Male 1) so you can select it from the list of voices." /></span>
-						<input type="text" id="voice_name" class="cfg_txt">
-						
 						<button id="clone_voice_btn" class="btn cfg_btn" onclick="CloneVoice()" disabled>CLONE VOICE SAMPLE</button>
 						<button id="tts_dir_btn" class="btn cfg_btn" onclick="OpenTTSDir()">OPEN VOICE FOLDER</button>
 					</center>
@@ -289,37 +316,42 @@
 				</div>
 				
 				<div id="imggen_side">
-					<center>
-						<h4 class="cfg_title">GENERATION SETTINGS</h4>
-						<span class="cfg_lbl">Inference Steps <img class="help_icon" width="16" height="16" title="The number of denoising steps. More steps usually lead to higher quality images at the expense of slower image generation." /></span>
-						<input type="number" id="infer_steps" class="cfg_num" min="1" max="100" value="50">
-						<span class="cfg_lbl">Guidance Scale <img class="help_icon" width="16" height="16" title="A higher guidance scale encourages the AI to adhere to the prompt but can lead to lower image quality. Enabled by setting higher than 1." /></span>
-						<input type="number" id="guidance" class="cfg_num" min="0.0" max="10.0" step="0.1" value="7.5">
-						<span class="cfg_lbl">Safety Checker <img class="help_icon" width="16" height="16" title="The safety checker will censor NSFW images. This setting overrides im_safety_check if it exists in the Model Setup arguments." /></span>
-						<select id="safety_check" class="cfg_drp">
-							<option value="1" selected>True</option>
-							<option value="0">False</option>
-						</select>
-						<span class="cfg_lbl">Image Size</span>
-						<select id="is_select" class="cfg_drp">
-							<option value="auto" selected>Auto</option>
-							<option value="custom">Custom</option>
-						</select>
-						<div id="is_input_box" class="hidden">
-							<span class="cfg_lbl">Image Width</span>
-							<input type="number" id="img_width" class="cfg_num" min="2" max="10000" value="512">
-							<span class="cfg_lbl">Image Height</span>
-							<input type="number" id="img_height" class="cfg_num" min="2" max="10000" value="512">
+					<center id="imggen_cbox" class="config_box">
+						<div id="imggen_config">
+							<h4 class="cfg_title">GENERATION SETTINGS</h4>
+							<span class="cfg_lbl">Inference Steps <img class="help_icon" width="16" height="16" title="The number of denoising steps. More steps usually lead to higher quality images at the expense of slower image generation." /></span>
+							<input type="number" id="infer_steps" class="cfg_num" min="1" max="100" value="50">
+							<span class="cfg_lbl">Guidance Scale <img class="help_icon" width="16" height="16" title="A higher guidance scale encourages the AI to adhere to the prompt but can lead to lower image quality. Enabled by setting higher than 1." /></span>
+							<input type="number" id="guidance" class="cfg_num" min="0.0" max="10.0" step="0.1" value="7.5">
+							<span class="cfg_lbl">Safety Checker <img class="help_icon" width="16" height="16" title="The safety checker will censor NSFW images. This setting overrides im_safety_check if it exists in the Model Setup arguments." /></span>
+							<select id="safety_check" class="cfg_drp">
+								<option value="1" selected>True</option>
+								<option value="0">False</option>
+							</select>
+							<span class="cfg_lbl">Image Size <img class="help_icon" width="16" height="16" title="Set a custom image width and height or use the default image size (usually depends on the image model)." /></span>
+							<select id="is_select" class="cfg_drp">
+								<option value="auto" selected>Auto</option>
+								<option value="custom">Custom</option>
+							</select>
+							<div id="is_input_box" class="hidden">
+								<span class="cfg_lbl">Image Width</span>
+								<input type="number" id="img_width" class="cfg_num" min="2" max="10000" value="512">
+								<span class="cfg_lbl">Image Height</span>
+								<input type="number" id="img_height" class="cfg_num" min="2" max="10000" value="512">
+							</div>
+							<span class="cfg_lbl">Image Seed <img class="help_icon" width="16" height="16" title="The seed value used to generate the image. The same seed will always result in the same image. Leave empty to use random seeds." /></span>
+							<input type="text" id="img_seed" class="cfg_txt">
+							<h4 class="cfg_title">ADVANCED SETTINGS</h4>
+							<span class="cfg_lbl">VAE Model <img class="help_icon" width="16" height="16" title="The path to a Variational Auto-Encoder (VAE) model file to be used. This setting overrides im_vae_file if it exists in the Model Setup arguments." /></span>
+							<input type="text" id="vae_file" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenFile('vae_file')">BROWSE</button>
+							<span class="cfg_lbl">LoRA Model <img class="help_icon" width="16" height="16" title="The file name (not a full path) of a LoRA model to be used. This setting overrides im_lora_file if it exists in the Model Setup arguments." /></span>
+							<input type="text" id="lora_file" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenFile('lora_file',true)">BROWSE</button>
+							<span class="cfg_lbl">LoRA Folder <img class="help_icon" width="16" height="16" title="The directory/repository containing the above LoRA model file. This setting overrides im_lora_dir if it exists in the Model Setup arguments." /></span>
+							<input type="text" id="lora_dir" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenFolder('lora_dir')">BROWSE</button>
+							<span class="cfg_lbl">LoRA Scale <img class="help_icon" width="16" height="16" title="Changes how much the LoRA model will influence the output. A higher value means the LoRA model has more influence. Has a default value of 1.0" /></span>
+							<input type="number" id="lora_scale" class="cfg_num" min="0.05" max="1.95" step="0.05" value="1.0">
+							<br><br>
 						</div>
-						<h4 class="cfg_title">ADVANCED SETTINGS</h4>
-						<span class="cfg_lbl">VAE Model <img class="help_icon" width="16" height="16" title="The path to a Variational Auto-Encoder (VAE) model file to be used. This setting overrides im_vae_file if it exists in the Model Setup arguments." /></span>
-						<input type="text" id="vae_file" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenFile('vae_file')">BROWSE</button>
-						<span class="cfg_lbl">LoRA Model <img class="help_icon" width="16" height="16" title="The file name (not a full path) of a LoRA model to be used. This setting overrides im_lora_file if it exists in the Model Setup arguments." /></span>
-						<input type="text" id="lora_file" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenFile('lora_file',true)">BROWSE</button>
-						<span class="cfg_lbl">LoRA Folder <img class="help_icon" width="16" height="16" title="The directory/repository containing the above LoRA model file. This setting overrides im_lora_dir if it exists in the Model Setup arguments." /></span>
-						<input type="text" id="lora_dir" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenFolder('lora_dir')">BROWSE</button>
-						<span class="cfg_lbl">LoRA Scale <img class="help_icon" width="16" height="16" title="Changes how much the LoRA model will influence the output. A higher value means the LoRA model has more influence. Has a default value of 1.0" /></span>
-						<input type="number" id="lora_scale" class="cfg_num" min="0.05" max="1.95" step="0.05" value="1.0">
 						<button id="copy_img_btn" class="btn cfg_btn" onclick="CopyGenImg()">COPY TO CLIPBOARD</button>
 						<button id="img_dir_btn" class="btn cfg_btn" onclick="OpenImgDir()">OPEN IMAGE FOLDER</button>
 					</center>
@@ -356,7 +388,7 @@
 							<div class="browse_btn"></div> <input type="text" id="script_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('script_dir')">BROWSE</button>
 							<span class="cfg_lbl">Python Binary <img class="help_icon" width="16" height="16" title="The location of your Python binary/executable file (on Windows it should be a file called python.exe)" /></span>
 							<div class="browse_btn"></div> <input type="text" id="python_bin" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFile('python_bin')">BROWSE</button>
-							<span class="cfg_lbl">Text Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. PygmalionAI/pygmalion-6b) or the directory containing the text generation model (usually has a pytorch_model.bin file in it)" /></span>
+							<span class="cfg_lbl">Text Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. PygmalionAI/pygmalion-6b) or the directory containing the text generation model (usually contains .safetensors files)" /></span>
 							<div class="browse_btn"></div> <input type="text" id="model_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('model_dir')">BROWSE</button>
 							<span class="cfg_lbl">Image Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. dreamlike-art/dreamlike-photoreal-2.0) or the file/folder with the image generation model (allows image generation)" /></span>
 							<div class="browse_btn"></div> <input type="text" id="im_model" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFileFolder('im_model')">BROWSE</button>
@@ -387,7 +419,9 @@
 							<select id="imodel_select" class="cfg_drp">
 								<option value="0">Stable Diffusion</option>
 								<option value="1">Stable Diffusion XL</option>
-								<option value="2">FLUX</option>
+								<option value="2">Stable Diffusion 3</option>
+								<option value="3">FLUX</option>
+								<option value="4">Qwen Image</option>
 							</select>
 							<span class="cfg_lbl">TTS Model Type <img class="help_icon" width="16" height="16" title="The type of AI model used for text-to-speech (models will be automatically downloaded if the 'TTS Model' setting is left empty)." /></span>
 							<select id="smodel_select" class="cfg_drp">
@@ -405,30 +439,38 @@
 					</div>
 					<div id="other_settings" class="hidden">
 						<div class="settings_col">
-							<span class="cfg_lbl">Enable BBCode <img class="help_icon" width="16" height="16" title="Allow the use of BBCode in messages on the Chat Bot tab." /></span>
-							<select id="bbcode_enable" class="cfg_drp">
-								<option value="1" selected>True</option>
-								<option value="0">False</option>
+							<span class="cfg_lbl">Enable Text Streaming <img class="help_icon" width="16" height="16" title="Enable text streaming to see a live view of the model output instead of waiting for all tokens to be generated first." /></span>
+							<select id="txtgen_mode" class="cfg_drp">
+								<option value="1">True</option>
+								<option value="0" selected>False</option>
 							</select>
 							<span class="cfg_lbl">Enable Dev Mode <img class="help_icon" width="16" height="16" title="Show a menu bar which provides access to developer tools." /></span>
 							<select id="devmode_enable" class="cfg_drp">
 								<option value="1">True</option>
 								<option value="0" selected>False</option>
 							</select>
-							<span class="cfg_lbl">Start Recording Shortcut <img class="help_icon" width="16" height="16" title="They keyboard shortcut used to start voice recording." /></span>
-							<input type="text" id="start_rec_keys" class="cfg_txt keys_input" value="">
-						</div>
-						<div class="settings_col">
 							<span class="cfg_lbl">Enable Tool Use <img class="help_icon" width="16" height="16" title="Allow the chat bot to utilize tool functions." /></span>
 							<select id="tooluse_enable" class="cfg_drp">
 								<option value="1" selected>True</option>
 								<option value="0">False</option>
+							</select>
+							<span class="cfg_lbl">HuggingFace Access Token <img class="help_icon" width="16" height="16" title="Input your HuggingFace Access Token so AI UI can download files from private or gated repos that you have access to." /></span>
+							<input type="text" id="hf_access_token" class="cfg_txt" value="">
+						</div>
+						<div class="settings_col">
+							<span class="cfg_lbl">Text Formatting <img class="help_icon" width="16" height="16" title="The text formatting syntax used in messages on the Chat Bot tab." /></span>
+							<select id="format_mode" class="cfg_drp">
+								<option value="0" selected>None</option>
+								<option value="1">BBCode</option>
+								<option value="2">Markdown</option>
 							</select>
 							<span class="cfg_lbl">Auto-send ASR Output <img class="help_icon" width="16" height="16" title="Automatically send messages when using speech recognition." /></span>
 							<select id="asasro_enable" class="cfg_drp">
 								<option value="1">True</option>
 								<option value="0" selected>False</option>
 							</select>
+							<span class="cfg_lbl">Start Recording Shortcut <img class="help_icon" width="16" height="16" title="They keyboard shortcut used to start voice recording." /></span>
+							<input type="text" id="start_rec_keys" class="cfg_txt keys_input" value="">
 							<span class="cfg_lbl">Stop Recording Shortcut <img class="help_icon" width="16" height="16" title="They keyboard shortcut used to stop voice recording." /></span>
 							<input type="text" id="stop_rec_keys" class="cfg_txt keys_input" value="">
 						</div>
@@ -461,7 +503,7 @@
 						
 						<p>CUDA is optional but highly recommended if you have an Nvidia GPU:</p>
 
-						<p>&nbsp;&bull; <a href="https://developer.nvidia.com/cuda-toolkit-archive" target="_blank">CUDA</a> (12.4 recommended)</p>
+						<p>&nbsp;&bull; <a href="https://developer.nvidia.com/cuda-toolkit-archive" target="_blank">CUDA</a> (12.8 recommended)</p>
 						
 						<p>Now open a command prompt as an administrator and create a virtual Python environment using this command:</p>
 
@@ -481,7 +523,14 @@
 
 						<p>If your GPU supports CUDA then run this command before installing the requirements in the previous step:</p>
 
-						<code class="dark_bg">pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124</code>
+						<code class="dark_bg">pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128</code>
+						
+						<p>Now exit the virtual environment and install <a href="https://nodejs.org" target="_blank">Node.js</a> for Windows. It should include the Node.js package manager.</p>
+
+						<p>Now navigate to the AI UI app folder then install the required Node.js packages using these commands:</p>
+
+						<code class="dark_bg">cd C:/AI_UI/resources/app</code><br>
+						<code class="dark_bg">npm install</code>
 					</details>
 					
 					<details><summary onclick="ToggleDetails(this)">Click to show install instructions for Linux</summary>
@@ -509,7 +558,7 @@
 
 						<p>If your GPU supports CUDA then run this command before installing the requirements in the previous step:</p>
 
-						<code class="dark_bg">pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124</code>
+						<code class="dark_bg">pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128</code>
 						
 						<p>Now exit the virtual environment and run this command to install the nodejs package manager:</p>
 						
@@ -535,6 +584,12 @@
 
 					<p>Before starting AI UI from a terminal, make sure you navigate to the location where the electron binary is located instead of trying to launch it from another directory. If you don't do this AI UI will use the wrong working directory and it will fail to read/write files.</p>
 					
+					<h3>Upgrading</h3>
+					
+					<p>New versions of AI UI often require new Python or Node.js packages. Refer to the installation instructions for your platform and follow the steps for installing the Node.js requirements. To install any new Python requirements and update any existing Python packages, run the following command (activate the virtual environment first):</p>
+
+					<code class="dark_bg">pip install -U -r /path/to/AI_UI/engine/requirements.txt</code>
+
 					<h3>Getting Started</h3>
 					
 					<p>After all the requirements have been installed you can launch the AI UI app. To get started you will need to visit the Settings tab so the engine knows where to find things like the Python environment and your model files.</p>
@@ -567,6 +622,10 @@
 					<p>Description: The minimum amount of VRAM to keep reserved for critical tasks and small models which get loaded and unloaded on the fly (such as TTS models and face animation models). This only has an effect when the <i>Compute Device</i> is set to Auto.</p>
 					<p>Valid Values: any integer (megabytes)</p><hr class="wide_hr">
 					
+					<h3>gguf_file <small class="arg_title">(default: none)</small></h3>
+					<p>Description: The file name (not a full path) of a GGUF file to be used by the text generation model. This allows quantized GGUF models to be loaded. The <i>Text Model</i> setting should point to a location containing the gguf file and any other model files that may be required.</p>
+					<p>Valid Values: any string (gguf model file)</p><hr class="wide_hr">
+					
 					<h3>use_safetensors <small class="arg_title">(default: none)</small></h3>
 					<p>Description: If this argument isn't set the text generation model will try loading from a .safetensors file if one is available. If true the model will be forcibly loaded from a .safetensors file. If set to false the model will not try loading from safetensors.</p>
 					<p>Valid Values: true, false</p><hr class="wide_hr">
@@ -580,7 +639,7 @@
 					<p>Valid Values: true, false</p><hr class="wide_hr">
 					
 					<h3>load_in_8bit <small class="arg_title">(default: false)</small></h3>
-					<p>Description: Load a 8-bit text generation model quantized with GPTQ. Quantized models typically use much less memory and run faster but produce lower quality results.</p>
+					<p>Description: Load the text generation model so it is quantized with 8-bit precision. Quantized models typically use much less memory and run faster but produce lower quality results.</p>
 					<p>Valid Values: true, false</p><hr class="wide_hr">
 					
 					<h3>use_chat_template <small class="arg_title">(default: false)</small></h3>
@@ -639,9 +698,29 @@
 					<p>Description: The path to a Variational Auto-Encoder (VAE) model file to be used by the image generation model. Cannot be directory, must be path to a single model file.</p>
 					<p>Valid Values: any string (vae model file)</p><hr class="wide_hr">
 					
+					<h3>im_unet_file <small class="arg_title">(default: none)</small></h3>
+					<p>Description: The path to a Conditional U-Net model file to be used by the image generation model. Only this or <b>im_tran_file</b> should be set, not both. Cannot be directory, must be path to a single model file.</p>
+					<p>Valid Values: any string (vae model file)</p><hr class="wide_hr">
+					
+					<h3>im_tran_file <small class="arg_title">(default: none)</small></h3>
+					<p>Description: The path to a transformer model file to be used by the image generation model. Only applies to newer diffusion models such as Stable Diffusion 3. Cannot be directory, must be path to a single model file.</p>
+					<p>Valid Values: any string (transformer model file)</p><hr class="wide_hr">
+					
+					<h3>im_enc_file <small class="arg_title">(default: none)</small></h3>
+					<p>Description: The path to a text encoder model file to be used by the image generation model. Use <b>im_enc2_file</b> and <b>im_enc3_file</b> for the 2nd and 3rd text encoders. Cannot be directory, must be path to a single model file.</p>
+					<p>Valid Values: any string (text encoder model file)</p><hr class="wide_hr">
+					
 					<h3>im_config_file <small class="arg_title">(default: none)</small></h3>
 					<p>Description: The path to a .yaml config file which specifies the architecture for the image generation model. This only has an effect when loading single model files, can be useful for offline model loading.</p>
 					<p>Valid Values: any string (model config file)</p><hr class="wide_hr">
+					
+					<h3>im_variant <small class="arg_title">(default: none)</small></h3>
+					<p>Description: The model variant to use for the image generation model. For example, a value of 'fp16' is typically used to load the 16 bit floating point variant of a model.</p>
+					<p>Valid Values: any string (variant name)</p><hr class="wide_hr">
+					
+					<h3>im_model_class <small class="arg_title">(default: none)</small></h3>
+					<p>Description: The diffusers model class used for the image generation model. This argument overrides the <i>Image Model Type</i> setting. Only change this if you know what you are doing.</p>
+					<p>Valid Values: any string (class name)</p><hr class="wide_hr">
 					
 					<h3>im_lora_file <small class="arg_title">(default: none)</small></h3>
 					<p>Description: The file name (not a full path) of a LoRA model to be used as an adapter for the image generation model (e.g. pixel-art-xl.safetensors). Requires <b>im_lora_dir</b> to be set.</p>
@@ -657,7 +736,11 @@
 				
 					<h3>im_torch_dtype <small class="arg_title">(default: float16)</small></h3>
 					<p>Description: The Torch data type used by the image generation model. Models using float16 will be faster and use less memory but are slightly lower quality than float32 models.</p>
-					<p>Valid Values: float32, float16</p><hr class="wide_hr">
+					<p>Valid Values: float32, float16, bfloat16</p><hr class="wide_hr">
+					
+					<h3>im_load_in_8bit <small class="arg_title">(default: false)</small></h3>
+					<p>Description: Load the image generation model with large components quantized using the bitsandbytes library. Does apply to some models loaded separately (using <b>im_tran_file</b> for example) but doesn't apply to GGUF files.</p>
+					<p>Valid Values: true, false</p><hr class="wide_hr">
 					
 					<h3>im_safety_check <small class="arg_title">(default: true)</small></h3>
 					<p>Description: Enable the safety checker to censor NSFW images produced by the image generation model. Set to false to disable the safety checker and prevent it from producing blank images.</p>

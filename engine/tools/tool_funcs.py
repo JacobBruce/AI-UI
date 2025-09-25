@@ -26,18 +26,21 @@ def local_timezone() -> str:
 # FUNCTIONS FOR AIUI ENGINE
 
 def CallToolFunc(func_name, func_args, aiui_funcs):
-	if func_name == "utc_date":
-		return utc_date()
-	elif func_name == "utc_time":
-		return utc_time()
-	elif func_name == "local_date":
-		return local_date()
-	elif func_name == "local_time":
-		return local_time()
-	elif func_name == "local_timezone":
-		return local_timezone()
-	else:
-		return "unknown function"
+	try:
+		if func_name == "utc_date":
+			return utc_date()
+		elif func_name == "utc_time":
+			return utc_time()
+		elif func_name == "local_date":
+			return local_date()
+		elif func_name == "local_time":
+			return local_time()
+		elif func_name == "local_timezone":
+			return local_timezone()
+		else:
+			return "ERROR: unknown function"
+	except Exception as e:
+		return f"ERROR: an exception occured ({e})"
 
 def GetToolFuncs():
 	return [utc_date, utc_time, local_date, local_time, local_timezone]

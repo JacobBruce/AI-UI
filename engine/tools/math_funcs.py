@@ -1,249 +1,74 @@
-import math 
+import math
+from asteval import Interpreter
+
+aeval_interpreter = Interpreter(use_numpy=True, no_while=True, no_print=True)
 
 # MATH TOOL FUNCTIONS
+#TODO: add sympy functions to asteval
 
-def mul(a: float, b: float) -> float:
+def reset_aeval():
+	"""Resets the asteval interpreter, clearing the symbol table."""
+	global aeval_interpreter
+	aeval_interpreter = Interpreter(use_numpy=True, no_while=True, no_print=True)
+
+def get_value(sym_name: str) -> str:
 	"""
-	Performs multiplication on two numbers
+	Returns the value of a variable in the asteval symbol table as a string.
+	Returns an error string if the symbol name does not exist.
     
 	Args:
-		a: The number on the left side of the operator
-		b: The number on the right side of the operator
+		sym_name: A symbol name. The value of that variable will be returned if it exists.
 	"""
-	return a * b
+	if sym_name in aeval_interpreter.symtable:
+		if type(aeval_interpreter.symtable[sym_name]) is str:
+			return aeval_interpreter.symtable[sym_name]
+		else:
+			return str(aeval_interpreter.symtable[sym_name])
+	else:
+		return "ERROR: symbol not found"
 
-def sum(a: float, b: float) -> float:
+def aeval(expression: str, sym_name: str='', reset: bool=False) -> str:
 	"""
-	Performs addition on two numbers
+	Safely evaluates Python-like code using asteval.
+	Useful for solving math-related problems.
+	Many functions from the math and numpy modules are available.
+	These features are disabled: importing, printing, while loops.
     
 	Args:
-		a: The number on the left side of the operator
-		b: The number on the right side of the operator
+		expression: The string of Python-like code to be evaluated.
+		sym_name: A symbol name. Forces the value of that variable to be returned. Optional.
+		reset: If true the interpreter is reset before evaluating the expression. Optional (default=False)
 	"""
-	return a + b
-
-def sub(a: float, b: float) -> float:
-	"""
-	Performs subtraction on two numbers
-    
-	Args:
-		a: The number on the left side of the operator
-		b: The number on the right side of the operator
-	"""
-	return a - b
-
-def div(a: float, b: float) -> float:
-	"""
-	Performs division on two numbers
-    
-	Args:
-		a: The number on the left side of the operator
-		b: The number on the right side of the operator
-	"""
-	return a / b
-
-def mod(a: float, b: float) -> float:
-	"""
-	Performs modulo division on two numbers
-    
-	Args:
-		a: The number on the left side of the operator
-		b: The number on the right side of the operator
-	"""
-	return math.fmod(a, b)
-
-def pow(a: float, b: float) -> float:
-	"""
-	Returns the base number raised to a power
-    
-	Args:
-		a: The base number
-		b: The exponent number
-	"""
-	return math.pow(a, b)
-
-def min(a: float, b: float) -> float:
-	"""
-	Returns the smallest of two numbers
-    
-	Args:
-		a: The first number
-		b: The second number
-	"""
-	return a if a < b else b
-
-def max(a: float, b: float) -> float:
-	"""
-	Returns the largest of two numbers
-    
-	Args:
-		a: The first number
-		b: The second number
-	"""
-	return a if a > b else b
-
-def abs(x: float) -> float:
-	"""
-	Returns the absolute value of a number
-    
-	Args:
-		x: The input number
-	"""
-	return math.fabs(x)
-
-def exp(x: float) -> float:
-	"""
-	Returns e raised to the power of a number
-    
-	Args:
-		x: The input number
-	"""
-	return math.exp(x)
-
-def sin(x: float) -> float:
-	"""
-	Returns the sine of a number in radians
-    
-	Args:
-		x: The input number
-	"""
-	return math.sin(x)
-
-def cos(x: float) -> float:
-	"""
-	Returns the cosine of a number in radians
-    
-	Args:
-		x: The input number
-	"""
-	return math.cos(x)
-
-def tan(x: float) -> float:
-	"""
-	Returns the tangent of a number in radians
-    
-	Args:
-		x: The input number
-	"""
-	return math.tan(x)
-
-def sqrt(x: float) -> float:
-	"""
-	Returns the square root of a number
-    
-	Args:
-		x: The input number
-	"""
-	return math.sqrt(x)
-
-def rnd(x: float) -> float:
-	"""
-	Returns a number rounded to the nearest integer
-    
-	Args:
-		x: The input number
-	"""
-	return round(x)
-
-def floor(x: float) -> float:
-	"""
-	Returns the largest integer less than or equal to a number
-    
-	Args:
-		x: The input number
-	"""
-	return math.floor(x)
-
-def ceil(x: float) -> float:
-	"""
-	Returns the smallest integer greater than or equal to a number
-    
-	Args:
-		x: The input number
-	"""
-	return math.ceil(x)
-
-def log(x: float) -> float:
-	"""
-	Returns the natural logarithm of a number
-    
-	Args:
-		x: The input number
-	"""
-	return math.log(x)
-
-def log2(x: float) -> float:
-	"""
-	Returns the base 2 logarithm of a number
-    
-	Args:
-		x: The input number
-	"""
-	return math.log2(x)
-
-def log10(x: float) -> float:
-	"""
-	Returns the base 10 logarithm of a number
-    
-	Args:
-		x: The input number
-	"""
-	return math.log10(x)
+	if reset: reset_aeval()
+	
+	result = aeval_interpreter(expression)
+	
+	if len(aeval_interpreter.error) > 0:
+		return "ERROR: " + aeval_interpreter.error_msg
+	elif sym_name != '' and sym_name in aeval_interpreter.symtable:
+		if type(aeval_interpreter.symtable[sym_name]) is str:
+			return aeval_interpreter.symtable[sym_name]
+		else:
+			return str(aeval_interpreter.symtable[sym_name])
+	elif type(result) is str:
+		return result
+	else:
+		return str(result)
 
 # FUNCTIONS FOR AIUI ENGINE
 
 def CallToolFunc(func_name, func_args, aiui_funcs):
 	try:
-		if 'a' in func_args and isinstance(func_args['a'], str):
-			func_args['a'] = float(func_args['a'])
-		if 'b' in func_args and isinstance(func_args['b'], str):
-			func_args['b'] = float(func_args['b'])
-		if 'x' in func_args and isinstance(func_args['x'], str):
-			func_args['x'] = float(func_args['x'])
-		if func_name == "mul":
-			return mul(func_args['a'], func_args['b'])
-		elif func_name == "sum":
-			return sum(func_args['a'], func_args['b'])
-		elif func_name == "sub":
-			return sub(func_args['a'], func_args['b'])
-		elif func_name == "div":
-			return div(func_args['a'], func_args['b'])
-		elif func_name == "mod":
-			return mod(func_args['a'], func_args['b'])
-		elif func_name == "pow":
-			return pow(func_args['a'], func_args['b'])
-		elif func_name == "min":
-			return min(func_args['a'], func_args['b'])
-		elif func_name == "max":
-			return max(func_args['a'], func_args['b'])
-		elif func_name == "abs":
-			return abs(func_args['x'])
-		elif func_name == "exp":
-			return exp(func_args['x'])
-		elif func_name == "sin":
-			return sin(func_args['x'])
-		elif func_name == "cos":
-			return cos(func_args['x'])
-		elif func_name == "tan":
-			return tan(func_args['x'])
-		elif func_name == "sqrt":
-			return sqrt(func_args['x'])
-		elif func_name == "rnd":
-			return rnd(func_args['x'])
-		elif func_name == "floor":
-			return floor(func_args['x'])
-		elif func_name == "ceil":
-			return ceil(func_args['x'])
-		elif func_name == "log":
-			return log(func_args['x'])
-		elif func_name == "log2":
-			return log2(func_args['x'])
-		elif func_name == "log10":
-			return log10(func_args['x'])
+		if func_name == "aeval":
+			return aeval(**func_args)
+		elif func_name == "get_value":
+			return get_value(**func_args)
+		elif func_name == "reset_aeval":
+			return reset_aeval()
 		else:
 			return "ERROR: unknown function"
-	except:
-		return "ERROR: invalid argument"
+	except Exception as e:
+		return f"ERROR: an exception occured ({e})"
 
 def GetToolFuncs():
-	return [mul, sum, sub, div, mod, pow, min, max, abs, exp, sin, cos, tan, sqrt, rnd, floor, ceil, log, log2, log10]
+	return [reset_aeval, get_value, aeval]

@@ -1,7 +1,9 @@
 transformers
-safetensors
 diffusers
 accelerate
+safetensors
+gguf
+bitsandbytes
 matplotlib
 pyttsx3
 chattts
@@ -31,6 +33,9 @@ numba
 yacs
 kornia
 facexlib
+asteval
 arxiv
 wikipedia-api
+firecrawl-py
 PyMuPDF
+html-to-markdown[lxml]

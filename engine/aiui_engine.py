@@ -5,6 +5,8 @@
 """
 
 import sys, time, glob, os, gc
+import threading
+import ctypes
 import json
 import wave
 import tempfile
@@ -20,6 +22,7 @@ import torch.nn as nn
 import soundfile as sf
 from peft import PeftModel
 from datetime import datetime
+from huggingface_hub import login
 from scipy.io import wavfile
 from scipy.signal import resample
 from tools.av import load_audio
@@ -33,9 +36,14 @@ from Wav2Lip.inference import load_face, anim_face
 from SadTalker.inference import loadface, animface
 from phonemizer.backend.espeak.wrapper import EspeakWrapper
 from diffusers.utils import load_image
-from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, FluxPipeline, AutoencoderKL, DDIMScheduler
-from transformers import StoppingCriteria, StoppingCriteriaList, SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan, pipeline
+from diffusers.quantizers import PipelineQuantizationConfig
+from diffusers import BitsAndBytesConfig as DiffusersBitsAndBytesConfig
+from transformers import BitsAndBytesConfig as TransformersBitsAndBytesConfig
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, StableDiffusion3Pipeline, QwenImagePipeline, FluxPipeline, GGUFQuantizationConfig
+from diffusers import AutoencoderKL, DDIMScheduler, UNet2DConditionModel, SD3Transformer2DModel, FluxTransformer2DModel, QwenImageTransformer2DModel
+from transformers import TextIteratorStreamer, StoppingCriteria, StoppingCriteriaList, SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan, pipeline
 from transformers import AutoTokenizer, AutoProcessor, AutoModel, AutoModelForCausalLM, AutoModelForImageTextToText, AutoModelForSpeechSeq2Seq
+from transformers import CLIPTextModel, CLIPTextModelWithProjection, T5EncoderModel, Qwen2_5_VLForConditionalGeneration
 
 kokoro_retry = False
 kokoro_loaded = False
@@ -78,9 +86,16 @@ smodel_type = int(input())
 model_args = input().split(',')
 device = input()
 start_meth = input()
-enable_bbcode = int(input())
-enable_tooluse = int(input())
 avatar_img = input()
+
+print("OTHER_CONFIG:")
+gen_mode = int(input())
+format_mode = int(input())
+enable_tooluse = int(input())
+hf_access_token = input()
+
+if hf_access_token != '':
+	login(token=hf_access_token)
 
 if not os.path.isdir(work_dir):
 	sys.exit("ERROR: cannot find engine folder at "+work_dir)
@@ -93,6 +108,9 @@ print("AI_CONFIG:")
 msg_mem = int(input())
 gen_max = int(input())
 gen_min = int(input())
+do_sample = int(input())
+num_beams = int(input())
+beam_groups = int(input())
 rando_lvl = float(input())
 prompt_p = int(input())
 top_k = int(input())
@@ -121,9 +139,8 @@ chat_files = []
 rag_files = []
 end_strings = None
 tool_funcs = None
+tool_func = None
 use_tool_config = True
-
-bbc_aimg_tags = ["AI_IMG", "ai_img"]
 
 min_res_vram_mb = 800
 ext_res_vram_mb = 0 if im_model_id == '' else 3000
@@ -136,13 +153,21 @@ model_adapter = ''
 im_lora_file = ''
 im_lora_dir = ''
 im_vae_file = ''
+im_unet_file = ''
+im_tran_file = ''
+im_enc_file = ''
+im_enc2_file = ''
+im_enc3_file = ''
 im_lora_scale = 1.0
+im_load_in_8bit = False
 im_safety_check = True
 im_cpu_offload = True
 im_att_slicing = False
 im_from_single_file = False
 im_local_files = False
 im_config_file = None
+im_model_class = None
+im_variant = None
 im_use_safetensors = None
 text_lang_class = None
 multi_modal_class = None
@@ -150,6 +175,7 @@ speech_recog_class = None
 process_vision_func = None
 attn_implementation = None
 use_safetensors = None
+gguf_file = None
 load_in_8bit = False
 custom_model_code = False
 custom_token_code = False
@@ -163,8 +189,10 @@ torch_dtype = "auto"
 use_chat_template = True if temp_form != "none" else False
 use_tool_template = True if temp_form == "tool" else False
 
-if imodel_type == 1: im_att_slicing = False
+if imodel_type > 0: im_att_slicing = False
 comp_dev = 'cuda' if device != 'cpu' and torch.cuda.is_available() else 'cpu'
+compile_mode = 'default' if comp_dev == 'cpu' else 'max-autotune'
+seed_gen = torch.Generator(device=comp_dev)
 
 for arg in model_args:
 	carg = arg.strip(" ").replace("\\", "/")
@@ -180,8 +208,22 @@ for arg in model_args:
 		im_lora_scale = float(carg.replace("im_lora_scale=", "", 1))
 	elif carg.startswith("im_vae_file="):
 		im_vae_file = carg.replace("im_vae_file=", "", 1)
+	elif carg.startswith("im_unet_file="):
+		im_unet_file = carg.replace("im_unet_file=", "", 1)
+	elif carg.startswith("im_tran_file="):
+		im_tran_file = carg.replace("im_tran_file=", "", 1)
+	elif carg.startswith("im_enc_file="):
+		im_enc_file = carg.replace("im_enc_file=", "", 1)
+	elif carg.startswith("im_enc2_file="):
+		im_enc2_file = carg.replace("im_enc2_file=", "", 1)
+	elif carg.startswith("im_enc3_file="):
+		im_enc3_file = carg.replace("im_enc3_file=", "", 1)
+	elif carg.startswith("im_variant="):
+		im_variant = carg.replace("im_variant=", "", 1)
 	elif carg.startswith("im_config_file="):
 		im_config_file = carg.replace("im_config_file=", "", 1)
+	elif carg.startswith("im_model_class="):
+		im_model_class = carg.replace("im_model_class=", "", 1)
 	elif carg.startswith("text_lang_class="):
 		text_lang_class = carg.replace("text_lang_class=", "", 1)
 	elif carg.startswith("multi_modal_class="):
@@ -192,7 +234,7 @@ for arg in model_args:
 		vocoder_model = carg.replace("vocoder_model=", "", 1)
 	elif carg.startswith("process_vision_func="):
 		process_vision_func = carg.replace("process_vision_func=", "", 1)
-	elif carg.startswith("roles_append_str="):
+	elif carg.startswith("attn_implementation="):
 		attn_implementation = carg.replace("attn_implementation=", "", 1)
 	elif carg.startswith("roles_append_str="):
 		roles_append_str = carg.replace("roles_append_str=", "", 1).replace("\\n", "\n")
@@ -218,6 +260,8 @@ for arg in model_args:
 			use_safetensors = True
 		else:
 			use_safetensors = False
+	elif carg.startswith("gguf_file="):
+		gguf_file = carg.replace("gguf_file=", "", 1).replace("\\n", "\n")
 	elif carg.startswith("im_use_safetensors="):
 		use_sts = carg.replace("im_use_safetensors=", "", 1)
 		if use_sts.lower() == "true" or use_sts == "1":
@@ -228,6 +272,10 @@ for arg in model_args:
 		load_8bit = carg.replace("load_in_8bit=", "", 1)
 		if load_8bit.lower() == "true" or load_8bit == "1":
 			load_in_8bit = True
+	elif carg.startswith("im_load_in_8bit="):
+		load_8bit = carg.replace("im_load_in_8bit=", "", 1)
+		if load_8bit.lower() == "true" or load_8bit == "1":
+			im_load_in_8bit = True
 	elif carg.startswith("custom_model_code="):
 		custom_code = carg.replace("custom_model_code=", "", 1)
 		if custom_code.lower() == "true" or custom_code == "1":
@@ -311,6 +359,7 @@ def CountFiles(dir_path):
 	return count
 
 def NewFileName(dir_path, name_str):
+	if not os.path.exists(dir_path): os.mkdir(dir_path)
 	file_num = CountFiles(dir_path)
 	file_name = name_str.replace("#NUM", str(file_num))
 	while os.path.isfile(dir_path+file_name):
@@ -337,6 +386,31 @@ def WriteTextFile(txt_file, txt_str, txt_encoding='utf-8'):
 	f.write(txt_str.encode(txt_encoding))
 	f.close()
 
+def SafeString(txt):
+	result = txt
+	unsafe_chars = {
+		'#': 'AI_UI_AMPnum;',
+		'$': 'AI_UI_AMPdollar;',
+		'+': 'AI_UI_AMPplus;',
+		'-': 'AI_UI_AMPminus;',
+		'~': 'AI_UI_AMPtilde;',
+		'.': 'AI_UI_AMPperiod;',
+		'*': 'AI_UI_AMPast;',
+		'`': 'AI_UI_AMPgrave;',
+		'!': 'AI_UI_AMPexcl;',
+		'|': 'AI_UI_AMPverbar;',
+		'(': 'AI_UI_AMPlpar;',
+		')': 'AI_UI_AMPrpar;',
+		'[': 'AI_UI_AMPlsqb;',
+		']': 'AI_UI_AMPrsqb;',
+		'<': 'AI_UI_AMPlt;',
+		'>': 'AI_UI_AMPgt;'
+	}
+	result = result.replace('_', 'AI_UI_AMPlowbar;')
+	for unsafe_char, safe_str in unsafe_chars.items():
+		result = result.replace(unsafe_char, safe_str)
+	return result
+
 def StripEnd(txt, ss):
 	return txt[:-len(ss)] if txt.endswith(ss) else txt
 
@@ -352,6 +426,8 @@ def LoadToolFuncs():
 			tool_module = "tools.search_funcs"
 		elif tool_mode == "math":
 			tool_module = "tools.math_funcs"
+		elif tool_mode == "merge":
+			tool_module = "tools.merge_funcs"
 		else:
 			tool_module = "tools.tool_funcs"
 		tool_funcs = getattr(importlib.import_module(tool_module), "GetToolFuncs")()
@@ -747,9 +823,8 @@ def LoadSRModel():
 			torch_dtype=sr_torch_dtype,
 			device=sr_device
 		)
-	except:
-		print("ERROR: failed to load speech recognition model", flush=True)
-		time.sleep(0.1)
+	except Exception as e:
+		sys.exit(f"ERROR: failed to load speech recognition model ({e})")
 
 def ResampleSpeech(origin_audio, origin_sr, new_sr):
 	new_samps = int(len(origin_audio) * new_sr/origin_sr)
@@ -781,17 +856,16 @@ def LoadTokenizer():
 	try:
 		if model_type == 2:
 			if tokenizer_model == '':
-				tokenizer = AutoProcessor.from_pretrained(model_id, trust_remote_code=custom_token_code)
+				tokenizer = AutoProcessor.from_pretrained(model_id, gguf_file=gguf_file, trust_remote_code=custom_token_code)
 			else:
-				tokenizer = AutoProcessor.from_pretrained(tokenizer_model, trust_remote_code=custom_token_code)
+				tokenizer = AutoProcessor.from_pretrained(tokenizer_model, gguf_file=gguf_file, trust_remote_code=custom_token_code)
 		else:
 			if tokenizer_model == '':
-				tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=custom_token_code)
+				tokenizer = AutoTokenizer.from_pretrained(model_id, gguf_file=gguf_file, trust_remote_code=custom_token_code)
 			else:
-				tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, trust_remote_code=custom_token_code)
-	except:
-		if start_meth == "text" or start_meth == "all":
-			sys.exit("ERROR: failed to load text tokenizer")
+				tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, gguf_file=gguf_file, trust_remote_code=custom_token_code)
+	except Exception as e:
+		sys.exit(f"ERROR: failed to load text tokenizer ({e})")
 
 def LoadModel():
 	global model
@@ -814,11 +888,11 @@ def LoadModel():
 			model_loader = AutoModelForImageTextToText
 	
 	if device == "auto":
-		model = model_loader.from_pretrained(model_id, torch_dtype=torch_dtype, attn_implementation=attn_implementation, use_safetensors=use_safetensors, load_in_8bit=load_in_8bit, trust_remote_code=custom_model_code, device_map="auto")
+		model = model_loader.from_pretrained(model_id, gguf_file=gguf_file, torch_dtype=torch_dtype, attn_implementation=attn_implementation, use_safetensors=use_safetensors, load_in_8bit=load_in_8bit, trust_remote_code=custom_model_code, device_map="auto")
 	elif device == "cuda":
-		model = model_loader.from_pretrained(model_id, torch_dtype=torch_dtype, attn_implementation=attn_implementation, use_safetensors=use_safetensors, load_in_8bit=load_in_8bit, trust_remote_code=custom_model_code).to(device)
+		model = model_loader.from_pretrained(model_id, gguf_file=gguf_file, torch_dtype=torch_dtype, attn_implementation=attn_implementation, use_safetensors=use_safetensors, load_in_8bit=load_in_8bit, trust_remote_code=custom_model_code).to(device)
 	else:
-		model = model_loader.from_pretrained(model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, attn_implementation=attn_implementation, use_safetensors=use_safetensors, trust_remote_code=custom_model_code).to(device)
+		model = model_loader.from_pretrained(model_id, gguf_file=gguf_file, torch_dtype=torch_dtype, low_cpu_mem_usage=True, attn_implementation=attn_implementation, use_safetensors=use_safetensors, trust_remote_code=custom_model_code).to(device)
 	
 	if model_adapter != '':
 		model.load_adapter(model_adapter)
@@ -826,7 +900,32 @@ def LoadModel():
 	model.eval()
 
 	if torch.__version__ >= "2" and torch_compile:
-		model = torch.compile(model)
+		model = torch.compile(model, mode=compile_mode)
+
+class TextGenThread(threading.Thread):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.exception = None
+		self.result = None
+
+	def run(self):
+		try:
+			with torch.no_grad():
+				self.result = self._target(*self._args, **self._kwargs)
+		except Exception as e:
+			self.exception = e
+
+	def get_id(self):
+		if hasattr(self, '_thread_id'): return self._thread_id
+		for id, thread in threading._active.items():
+			if thread is self: return id
+
+	def force_kill(self):
+		thread_id = self.get_id()
+		res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, ctypes.py_object(SystemExit))
+		if res > 1:
+			ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
+			sys.exit('ERROR: failed to kill TextGenThread')
 
 class StoppingCriteriaKeys(StoppingCriteria):
 	def __init__(self, keywords_ids:list):
@@ -840,30 +939,34 @@ class StoppingCriteriaKeys(StoppingCriteria):
 			key_num += 1
 		return True
 
-def GetStopStrings():
+def GenStopStrings():
+	global end_strings
+	if end_strings != None: return
+	end_strings = []
 	if use_chat_template == True:
 		if hasattr(tokenizer, 'eos_token') and isinstance(tokenizer.eos_token, str):
 			if tokenizer.eos_token == "<|endoftext|>":
-				return [tokenizer.eos_token]
+				end_strings.append(tokenizer.eos_token)
 			else:
-				return [tokenizer.eos_token, "<|endoftext|>"]
+				end_strings += [tokenizer.eos_token, "<|endoftext|>"]
 		else:
-			return ["<|endoftext|>"]
+			end_strings.append("<|endoftext|>")
 	else:
 		if hasattr(tokenizer, 'eos_token') and isinstance(tokenizer.eos_token, str):
 			if tokenizer.eos_token == "<|endoftext|>":
-				return [tokenizer.eos_token, "\n"+user_name_c]
+				end_strings += [tokenizer.eos_token, "\n"+user_name_c]
 			else:
-				return [tokenizer.eos_token, "<|endoftext|>", "\n"+user_name_c]
+				end_strings += [tokenizer.eos_token, "<|endoftext|>", "\n"+user_name_c]
 		else:
-			return ["<|endoftext|>", "\n"+user_name_c]
+			end_strings += ["<|endoftext|>", "\n"+user_name_c]
 
 def TokenizeChat():
 	global rag_files
 	if tokenizer == None: LoadTokenizer()
 	if use_chat_template:
 		if use_tool_template and tool_funcs != None:
-			result = tokenizer.apply_chat_template(messages, tools=tool_funcs, chat_template="tool_use", add_generation_prompt=True, return_dict=True, return_tensors="pt")
+			tool_use = "tool_use" if hasattr(tokenizer, "chat_template") and (not type(tokenizer.chat_template) is str) else None
+			result = tokenizer.apply_chat_template(messages, tools=tool_funcs, chat_template=tool_use, add_generation_prompt=True, return_dict=True, return_tensors="pt")
 			result = {k: v.to(comp_dev) for k, v in result.items()}
 		elif len(rag_files) > 0 and len(chat_files) == 0:
 			for rag_file in rag_files:
@@ -902,39 +1005,129 @@ def TokenizeChat():
 	
 	return result
 
-def GenText(it, rl):
-	global model, tokenizer, end_strings
-	if model == None: LoadModel()
-	CleanVRAM()
-	if end_strings == None: end_strings = GetStopStrings()
-	with torch.no_grad():
-		if isinstance(it, torch.Tensor) or type(it) is list:
-			out_tokens = model.generate(inputs=it, do_sample=True, tokenizer=tokenizer, min_new_tokens=gen_min, max_new_tokens=gen_max,
-				temperature=rl, top_k=top_k, top_p=top_p, typical_p=typical_p, repetition_penalty=rep_penalty, stop_strings=end_strings)
+def StreamText(txt_streamer, gen_kwargs):
+	global model
+	
+	gen_text = ""
+	stream_state = "STREAMING"
+	thread = TextGenThread(target=model.generate, kwargs=gen_kwargs)
+	thread.start()
+	time.sleep(0.5)
+	
+	if thread.exception:
+		thread.join()
+		return "ERROR: failed to start text stream thread"
+	
+	for new_text in txt_streamer:
+		if thread.exception:
+			print(f"ERROR: model failed to generate text ({thread.exception})", flush=True)
+			break
+		elif stream_state == "STREAMING":
+			nobr_str = new_text.replace("\n", "[AI_UI_BR]").replace("\r", "")
+			gen_text += nobr_str
+			print("STREAM_WORD:"+nobr_str, flush=True)
 		else:
-			try:
-				out_tokens = model.generate(**it, do_sample=True, tokenizer=tokenizer, min_new_tokens=gen_min, max_new_tokens=gen_max,
-					temperature=rl, top_k=top_k, top_p=top_p, typical_p=typical_p, repetition_penalty=rep_penalty, stop_strings=end_strings)
-			except:
-				out_tokens = model.generate(**it, do_sample=True, tokenizer=tokenizer, min_new_tokens=gen_min, max_new_tokens=gen_max,
-					temperature=rl, top_k=top_k, top_p=top_p, typical_p=typical_p, repetition_penalty=rep_penalty)
-	CleanVRAM()
-	ReserveVRAM()
-	if isinstance(it, torch.Tensor) or type(it) is list:
-		return tokenizer.decode(out_tokens[0][len(it[0]):], skip_special_tokens=skip_special_tokens, clean_up_tokenization_space=cleanup_token_space)
+			thread.force_kill()
+			break
+		stream_state = input()
+	
+	thread.join()
+	
+	time.sleep(0.1)
+	print("[AIUI_STREAM_END]", flush=True)
+	time.sleep(0.1)
+	
+	if thread.result == None:
+		return gen_text
 	else:
-		return tokenizer.decode(out_tokens[0][it["input_ids"].shape[-1]:], skip_special_tokens=skip_special_tokens, clean_up_tokenization_space=cleanup_token_space)
+		return thread.result
 
-def GenNoStop(it, nt, mt, rl, tk, tp, ty, rp):
+def GenReply(it, rl):
 	global model, tokenizer
-	CleanVRAM()
 	if model == None: LoadModel()
-	with torch.no_grad():
-		out_tokens = model.generate(do_sample=True, tokenizer=tokenizer, inputs=it, min_new_tokens=nt,
-			max_new_tokens=mt, temperature=rl, top_k=tk, top_p=tp, typical_p=ty, repetition_penalty=rp)
+	CleanVRAM()
+	GenStopStrings()
+	
+	if gen_mode == 0:
+		txt_streamer = None
+	else:
+		print("TEXT_STREAM:", flush=True)
+		txt_streamer = TextIteratorStreamer(tokenizer, skip_prompt=True)
+	
+	if isinstance(it, torch.Tensor) or type(it) is list:
+		gen_kwargs = dict(
+			inputs=it, do_sample=do_sample, num_beams=num_beams, num_beam_groups=beam_groups,
+			tokenizer=tokenizer, streamer=txt_streamer, min_new_tokens=gen_min, max_new_tokens=gen_max,
+			temperature=rl, top_k=top_k, top_p=top_p, typical_p=typical_p, repetition_penalty=rep_penalty, stop_strings=end_strings
+		)
+	elif type(it) is dict:
+		it['do_sample'] = do_sample
+		it['num_beams'] = num_beams
+		it['num_beam_groups'] = beam_groups
+		it['tokenizer'] = tokenizer
+		it['streamer'] = txt_streamer
+		it['min_new_tokens'] = gen_min
+		it['max_new_tokens'] = gen_max
+		it['temperature'] = rl
+		it['top_k'] = top_k
+		it['top_p'] = top_p
+		it['typical_p'] = typical_p
+		it['repetition_penalty'] = rep_penalty
+		it['stop_strings'] = end_strings
+		gen_kwargs = it
+	else:
+		sys.exit("ERROR: unexpected input token format")
+	
+	if txt_streamer == None:
+		with torch.no_grad():
+			try:
+				output = model.generate(**gen_kwargs)
+			except:
+				del gen_kwargs['stop_strings']
+				output = model.generate(**gen_kwargs)
+	else:
+		output = StreamText(txt_streamer, gen_kwargs)
+	
 	CleanVRAM()
 	ReserveVRAM()
-	return tokenizer.decode(out_tokens[0], skip_special_tokens=skip_special_tokens)
+	
+	if type(output) is str:
+		return output
+	elif isinstance(it, torch.Tensor) or type(it) is list:
+		return tokenizer.decode(output[0][len(it[0]):], skip_special_tokens=skip_special_tokens, clean_up_tokenization_space=cleanup_token_space)
+	else:
+		return tokenizer.decode(output[0][it["input_ids"].shape[-1]:], skip_special_tokens=skip_special_tokens, clean_up_tokenization_space=cleanup_token_space)
+
+def GenText(it, nt, mt, ds, nb, ng, rl, tk, tp, ty, rp):
+	global model, tokenizer
+	if model == None: LoadModel()
+	CleanVRAM()
+	
+	if gen_mode == 0:
+		txt_streamer = None
+	else:
+		print("GEN_STREAM:", flush=True)
+		txt_streamer = TextIteratorStreamer(tokenizer, skip_prompt=True)
+	
+	gen_kwargs = dict(
+		inputs=it, do_sample=ds, num_beams=nb, num_beam_groups=ng,
+		tokenizer=tokenizer, streamer=txt_streamer, min_new_tokens=nt, max_new_tokens=mt,
+		temperature=rl, top_k=tk, top_p=tp, typical_p=ty, repetition_penalty=rp
+	)
+	
+	if txt_streamer == None:
+		with torch.no_grad():
+			output = model.generate(**gen_kwargs)
+	else:
+		output = StreamText(txt_streamer, gen_kwargs)
+	
+	CleanVRAM()
+	ReserveVRAM()
+	
+	if type(output) is str:
+		return output
+	else:
+		return tokenizer.decode(output[0], skip_special_tokens=skip_special_tokens)
 
 ###### IMAGE MODEL STUFF ######
 
@@ -965,6 +1158,24 @@ def DiffIMGMode(safety_check, vae_file, lora_file, lora_dir, lora_scale):
 	last_ls_val = lora_scale
 	return result
 
+def LoadIMGModule(module_name, module_file, module_loader, module_list, bnb_config):
+	if module_loader == None:
+		sys.exit(f"ERROR: got unexpected model file ({module_file})")
+	if module_file.lower().endswith(".gguf"):
+		quant_config = GGUFQuantizationConfig(compute_dtype=im_torch_dtype)
+		if module_name in module_list: module_list.remove(module_name)
+	elif module_name in module_list:
+		quant_config = bnb_config
+		module_list.remove(module_name)
+	else:
+		quant_config = None
+	return module_loader.from_single_file(
+		module_file,
+		torch_dtype = im_torch_dtype,
+		local_files_only = im_local_files,
+		quantization_config = quant_config
+	)
+
 def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file=None, lora_dir=None, lora_scale=None):
 	global im_model, reserve_vram_mb
 	orig_rvram = reserve_vram_mb
@@ -983,28 +1194,87 @@ def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file
 		reserve_vram_mb = min_res_vram_mb
 	ReserveVRAM()
 
-	if imodel_type == 0:
+	if im_model_class != None:
+		model_loader = getattr(importlib.import_module("diffusers"), im_model_class)
+		ivae_loader = AutoencoderKL
+		itran_loader = None
+		ienc_loader = [CLIPTextModel, None, None]
+		comps_to_quant = []
+	elif imodel_type == 0:
 		model_loader = StableDiffusionPipeline
+		ivae_loader = AutoencoderKL
+		itran_loader = None
+		ienc_loader = [CLIPTextModel, None, None]
+		comps_to_quant = ["unet"]
 	elif imodel_type == 1:
 		model_loader = StableDiffusionXLPipeline
-	else:
+		ivae_loader = AutoencoderKL
+		itran_loader = None
+		ienc_loader = [CLIPTextModel, CLIPTextModelWithProjection, None]
+		comps_to_quant = ["unet", "text_encoder_2"]
+	elif imodel_type == 2:
+		model_loader = StableDiffusion3Pipeline
+		ivae_loader = AutoencoderKL
+		itran_loader = SD3Transformer2DModel
+		ienc_loader = [CLIPTextModel, CLIPTextModelWithProjection, T5EncoderModel]
+		comps_to_quant = ["transformer", "text_encoder_2", "text_encoder_3"]
+	elif imodel_type == 3:
 		model_loader = FluxPipeline
+		ivae_loader = AutoencoderKL
+		itran_loader = FluxTransformer2DModel
+		ienc_loader = [CLIPTextModel, T5EncoderModel, None]
+		comps_to_quant = ["transformer", "text_encoder_2"]
+	else:
+		model_loader = QwenImagePipeline
+		ivae_loader = AutoencoderKLQwenImage
+		itran_loader = QwenImageTransformer2DModel
+		ienc_loader = [Qwen2_5_VLForConditionalGeneration, None, None]
+		comps_to_quant = ["transformer", "text_encoder"]
 	
 	try:
-		if im_from_single_file or im_model_id.endswith(".safetensors") or im_model_id.endswith(".ckpt"):
-			if safety_check:
-				im_model = model_loader.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file)
-			else:
-				im_model = model_loader.from_single_file(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file, safety_checker=None)
-		else:
-			if safety_check:
-				im_model = model_loader.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file)
-			else:
-				im_model = model_loader.from_pretrained(im_model_id, torch_dtype=im_torch_dtype, use_safetensors=im_use_safetensors, local_files_only=im_local_files, original_config_file=im_config_file, safety_checker=None)
+		tbnb_config = TransformersBitsAndBytesConfig(load_in_8bit=True) if im_load_in_8bit else None
+		dbnb_config = DiffusersBitsAndBytesConfig(load_in_8bit=True) if im_load_in_8bit else None
+
+		gen_kwargs = dict(
+			torch_dtype=im_torch_dtype,
+			variant=im_variant, use_safetensors=im_use_safetensors,
+			local_files_only=im_local_files, original_config_file=im_config_file
+		)
+		
+		if im_enc_file != '':
+			gen_kwargs["text_encoder"] = LoadIMGModule("text_encoder", im_enc_file, ienc_loader[0], comps_to_quant, tbnb_config)
+		if im_enc2_file != '':
+			gen_kwargs["text_encoder_2"] = LoadIMGModule("text_encoder_2", im_enc2_file, ienc_loader[1], comps_to_quant, tbnb_config)
+		if im_enc3_file != '':
+			gen_kwargs["text_encoder_3"] = LoadIMGModule("text_encoder_3", im_enc3_file, ienc_loader[2], comps_to_quant, tbnb_config)
 		
 		if vae_file != '':
-			vae_model = AutoencoderKL.from_single_file(vae_file, torch_dtype=im_torch_dtype, local_files_only=im_local_files)
-			im_model.vae = vae_model
+			gen_kwargs["vae"] = LoadIMGModule("vae", vae_file, ivae_loader, comps_to_quant, dbnb_config)
+		
+		if im_unet_file != '':
+			gen_kwargs["unet"] = LoadIMGModule("unet", im_unet_file, UNet2DConditionModel, comps_to_quant, dbnb_config)
+
+		elif im_tran_file != '':
+			if itran_loader == None:
+				if im_model_class == None:
+					sys.exit(f"ERROR: {model_loader.__name__} does not use a transformer model")
+				else:
+					sys.exit("ERROR: cannot use im_tran_file with im_model_class")
+			gen_kwargs["transformer"] = LoadIMGModule("transformer", im_tran_file, itran_loader, comps_to_quant, dbnb_config)
+		
+		if not safety_check: gen_kwargs["safety_checker"] = None
+		
+		if im_load_in_8bit and len(comps_to_quant) > 0:
+			gen_kwargs["quantization_config"] = PipelineQuantizationConfig(
+				quant_backend = "bitsandbytes_8bit",
+				quant_kwargs = { "load_in8bit": True },
+				components_to_quantize = comps_to_quant
+			)
+		
+		if im_from_single_file or im_model_id.endswith(".safetensors") or im_model_id.endswith(".ckpt"):
+			im_model = model_loader.from_single_file(im_model_id, **gen_kwargs)
+		else:
+			im_model = model_loader.from_pretrained(im_model_id, **gen_kwargs)
 		
 		if device == "auto":
 			if torch.cuda.is_available() and not im_cpu_offload:
@@ -1016,19 +1286,30 @@ def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file
 			im_model.load_lora_weights(lora_dir, weight_name=lora_file)
 			im_model.fuse_lora(lora_scale=lora_scale)
 		
+		if torch_compile:
+			im_model.vae.to(memory_format=torch.channels_last)
+			im_model.vae.decode = torch.compile(im_model.vae.decode, mode=compile_mode)
+			if hasattr(im_model, "transformer"):
+				im_model.transformer.to(memory_format=torch.channels_last)
+				im_model.transformer = torch.compile(im_model.transformer, mode=compile_mode)
+			elif hasattr(im_model, "unet"):
+				im_model.unet.to(memory_format=torch.channels_last)
+				im_model.unet = torch.compile(im_model.unet, mode=compile_mode)
+		
 		if im_cpu_offload:
 			im_model.enable_model_cpu_offload()
 			
 		if im_att_slicing:
 			im_model.enable_attention_slicing("max")
-	except:
+		
+	except Exception as e:
 		reserve_vram_mb = orig_rvram
 		im_model = None
 		result = False
 		if exit_on_error:
-			sys.exit("ERROR: failed to load image model")
+			sys.exit(f"ERROR: failed to load image model ({e})")
 		else:
-			print("ERROR: failed to load image model", flush=True)
+			print(f"ERROR: failed to load image model ({e})", flush=True)
 			time.sleep(0.1)
 	
 	CleanVRAM()
@@ -1036,18 +1317,18 @@ def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file
 	
 	return result
 
-def GenImage(image_prompt, neg_prompt="NONE", infer_steps=50, guidance=7.5, img_width="auto", img_height="auto", gen_mode=False):
+def GenImage(image_prompt, neg_prompt="NONE", infer_steps=50, guidance=7.5, img_seed="NONE", img_width="auto", img_height="auto", igen_mode=False):
 	global im_model, img_gen_mode, orig_shdlr
 
-	if image_prompt == '': return -1
+	if image_prompt == '': return "ERROR: Invalid prompt text."
 	
 	CleanVRAM()
 
 	while True:
-		if im_model == None or (gen_mode == False and img_gen_mode == True):
+		if im_model == None or (igen_mode == False and img_gen_mode == True):
 			img_gen_mode = False
 			if not LoadIMGModel(False):
-				img_num = -2
+				result = "ERROR: There was an error loading the image generation model."
 				break
 			
 		try:
@@ -1057,41 +1338,39 @@ def GenImage(image_prompt, neg_prompt="NONE", infer_steps=50, guidance=7.5, img_
 				orig_shdlr = None
 			
 			clean_prompt = image_prompt.strip(' ').replace("\n", ' ').replace("\r", '')
+			if neg_prompt == "NONE": neg_prompt = default_neg_prompt
+			
+			gen_kwargs = dict(
+				prompt=clean_prompt, negative_prompt=neg_prompt,
+				num_inference_steps=infer_steps, guidance_scale=guidance
+			)
+			
+			if img_width != "auto" and img_height != "auto":
+				gen_kwargs["width"] = int(img_width)
+				gen_kwargs["height"] = int(img_height)
+			
+			if img_seed != "NONE":
+				gen_kwargs["generator"] = seed_gen.manual_seed(int(img_seed))
 
-			with torch.inference_mode():
-				if neg_prompt == "NONE":
-					if img_width == "auto" or img_height == "auto":
-						output = im_model(prompt=clean_prompt, num_inference_steps=infer_steps, guidance_scale=guidance)
-					else:
-						output = im_model(prompt=clean_prompt, num_inference_steps=infer_steps, guidance_scale=guidance, width=int(img_width), height=int(img_height))
-				else:
-					if img_width == "auto" or img_height == "auto":
-						output = im_model(prompt=clean_prompt, negative_prompt=neg_prompt, num_inference_steps=infer_steps, guidance_scale=guidance)
-					else:
-						output = im_model(prompt=clean_prompt, negative_prompt=neg_prompt, num_inference_steps=infer_steps, guidance_scale=guidance, width=int(img_width), height=int(img_height))
+			with torch.inference_mode(): output = im_model(**gen_kwargs)
+		
 		except:
-			print("ERROR: failed to generate image", flush=True)
-			time.sleep(0.1)
-			img_num = -3
+			result = "ERROR: There was an error generating the image with your settings."
 			break
 
 		try:
-			img_dir = work_dir+"/ai_images/"
-			if not os.path.exists(img_dir): os.mkdir(img_dir)
-			result = NewFileName(img_dir, "image_#NUM.png")
-			output.images[0].save(result["file"])
-			img_num = result["num"]
+			result = NewFileName(work_dir+"/ai_images/", "image_#NUM.png")
+			result = result["file"]
+			output.images[0].save(result)
 		except:
-			print("ERROR: failed to save image", flush=True)
-			time.sleep(0.1)
-			img_num = -4
+			result = "ERROR: Failed to save the image. Run the app as an admin."
 		
 		break
 
 	CleanVRAM()
 	ReserveVRAM()
 	
-	return img_num
+	return result
 
 def GenImageIPA(image_prompt, guide_image=None, is_person=False):
 	global im_model, orig_shdlr
@@ -1104,9 +1383,7 @@ def GenImageIPA(image_prompt, guide_image=None, is_person=False):
 		neg_prompt = default_neg_prompt
 	
 	if guide_image == None:
-		img_num = GenImage(image_prompt, neg_prompt)
-		img_dir = work_dir+"/ai_images/"
-		return img_dir+"image_"+str(img_num)+".png"
+		return GenImage(image_prompt, neg_prompt)
 
 	CleanVRAM()
 	
@@ -1123,8 +1400,8 @@ def GenImageIPA(image_prompt, guide_image=None, is_person=False):
 					#ipa_subfolder = "sdxl_models"
 					#ipa_ckpt = "ip-adapter-plus-face_sdxl_vit-h.safetensors"
 					return "ERROR: SDXL Face IP-Adapter not yet supported"
-				elif imodel_type == 2:
-					return "ERROR: FLUX Face IP-Adapter not yet supported"
+				elif imodel_type > 1:
+					return "ERROR: Face IP-Adapter not yet supported"
 			else:
 				ipa_model_id = "h94/IP-Adapter"
 				ipa_subfolder = "models"
@@ -1132,8 +1409,8 @@ def GenImageIPA(image_prompt, guide_image=None, is_person=False):
 				if imodel_type == 1:
 					ipa_subfolder = "sdxl_models"
 					ipa_ckpt = "ip-adapter_sdxl.safetensors"
-				elif imodel_type == 2:
-					return "ERROR: FLUX IP-Adapter not yet supported"
+				elif imodel_type > 1:
+					return "ERROR: IP-Adapter not yet supported"
 			
 			orig_shdlr = im_model.scheduler
 			im_model.scheduler = DDIMScheduler.from_config(im_model.scheduler.config)
@@ -1152,9 +1429,7 @@ def GenImageIPA(image_prompt, guide_image=None, is_person=False):
 		return "ERROR: failed to generate image"
 
 	try:
-		img_dir = work_dir+"/ai_images/"
-		if not os.path.exists(img_dir): os.mkdir(img_dir)
-		result = NewFileName(img_dir, "image_#NUM.png")
+		result = NewFileName(work_dir+"/ai_images/", "image_#NUM.png")
 		output.images[0].save(result["file"])
 	except:
 		return "ERROR: failed to save image"
@@ -1182,14 +1457,14 @@ def GetUserNames():
 		bot_name_c = bot_name+roles_append_str.rstrip()
 
 	if tokenizer != None:
-		end_strings = GetStopStrings()
+		GenStopStrings()
 	else:
 		end_strings = None
 
 def InitPrompt(have_prompt=False):
 	global messages, prompt, init_prompt, redo_count
 	redo_count = 0
-	if have_prompt:
+	if have_prompt and init_prompt != '':
 		prompt = init_prompt
 	else:
 		prompt = 'Chat log between '+user_name+' and '+bot_name+' on {dt.month}/{dt.day}/{dt.year}'.format(dt = datetime.utcnow())
@@ -1281,11 +1556,12 @@ InitPrompt()
 
 while (True):
 
-	print("HUMAN_INPUT:")
+	time.sleep(0.1)
+	print("HUMAN_INPUT:", flush=True)
 	msg = input().replace("[AI_UI_BR]", "\n").strip(" \n").replace("\r", '')
 
 	if (msg == ''):
-		continue	
+		continue
 	elif msg == "close_chat":
 		break
 	elif msg == "new_game":
@@ -1408,6 +1684,9 @@ while (True):
 		msg_mem = int(input())
 		gen_max = int(input())
 		gen_min = int(input())
+		do_sample = int(input())
+		num_beams = int(input())
+		beam_groups = int(input())
 		rando_lvl = float(input())
 		prompt_p = int(input())
 		top_k = int(input())
@@ -1427,8 +1706,22 @@ while (True):
 					messages = [{"role":"system", "content":init_prompt}]
 		PrunePrompt()
 		continue
+	elif msg == "config_other":
+		print("OTHER_CONFIG:")
+		gen_mode = int(input())
+		format_mode = int(input())
+		enable_tools = int(input())
+		hf_token = input()
+		if hf_token != hf_access_token:
+			hf_access_token = hf_token
+			if hf_token != '': login(token=hf_token)
+		if enable_tools != enable_tooluse:
+			enable_tooluse = enable_tools
+			LoadToolFuncs()
+		continue
 	elif msg == "config_tools":
 		print("TOOL_CONFIG:")
+		end_strings = None
 		temp_form = input()
 		tool_mode = input()
 		if use_tool_config:
@@ -1443,30 +1736,31 @@ while (True):
 		infer_steps = int(input())
 		guidance = float(input())
 		safety_check = int(input())
+		img_seed = input()
 		img_width = input()
 		img_height = input()
 		vae_file = input()
 		lora_file = input()
 		lora_dir = input()
 		lora_scale = float(input())
-		img_num = -5
 		safety_check = True if safety_check > 0 else False
 		diff_mode = DiffIMGMode(safety_check, vae_file, lora_file, lora_dir, lora_scale)
 		if im_model == None or diff_mode == 2 or (img_gen_mode == False and diff_mode == 1):
 			if LoadIMGModel(False, safety_check, vae_file, lora_file, lora_dir, lora_scale):
 				img_gen_mode = True
-			else:
-				img_num = -2
-		if img_num != -2:
-			img_num = GenImage(img_prompt, neg_prompt, infer_steps, guidance, img_width, img_height, True)
-		print("IMG_OUTPUT:"+str(img_num), flush=True)
-		time.sleep(0.1)
+		if im_model != None:
+			img_file = GenImage(img_prompt, neg_prompt, infer_steps, guidance, img_seed, img_width, img_height, True)
+			print("IMG_OUTPUT:"+img_file, flush=True)
+			time.sleep(0.1)
 		continue
 	elif msg == "gen_text":
 		print("START_TEXT:")
 		start_txt = input().replace("[AI_UI_BR]", "\n").replace("\r", '')
 		gmax = int(input())
 		gmin = int(input())
+		dsmp = int(input())
+		numb = int(input())
+		numg = int(input())
 		temp = float(input())
 		topk = int(input())
 		topp = float(input())
@@ -1474,7 +1768,7 @@ while (True):
 		repp = float(input())
 		if tokenizer == None: LoadTokenizer()
 		in_tokens = tokenizer(start_txt, return_tensors="pt").input_ids.to(comp_dev)
-		text = GenNoStop(in_tokens, gmin, gmax, temp, topk, topp, typp, repp)
+		text = GenText(in_tokens, gmin, gmax, dsmp, numb, numg, temp, topk, topp, typp, repp)
 		print("GEN_OUTPUT:"+text.replace("\n", "[AI_UI_BR]"), flush=True)
 		time.sleep(0.1)
 		continue
@@ -1609,11 +1903,9 @@ while (True):
 	temp = min(1.0, max(rando_lvl, rando_min))
 	
 	in_tokens = TokenizeChat()
-	response = GenText(in_tokens, temp).replace("\r", '')
+	response = GenReply(in_tokens, temp).replace("\r", '')
 	responses = response.split("\n")
 
-	response_error = ". . ."
-	got_res = False
 	redo_count = 0
 	r = 0
 
@@ -1639,24 +1931,12 @@ while (True):
 					cmb_response += "\n" + StripStart(nxt_response, bot_name_c).lstrip(' ')
 					r += 1
 
-			cmb_response = cmb_response.strip(" \n")
-			try_again = False
+			cmb_response = StripStart(cmb_response.strip(" \n"), bot_name_c).lstrip(' ')
 		
-			if cmb_response == '':
-				try_again = True
-			else:
-				cmb_response = StripStart(cmb_response, bot_name_c).lstrip(' ')
-				got_res = True
-
-			if not got_res and try_again:
-				rando_lvl += rando_add
-				if rando_lvl <= 1.0:
-					response = GenText(in_tokens, rando_lvl).replace("\r", '')
-					responses = response.split("\n")
-					r = 0
-					continue
-				else:
-					break
+		if cmb_response == '':
+			print("BOT_NOANIM:", flush=True)
+			time.sleep(0.1)
+			break
 		
 		tc_response = ''
 		tc_errors = 0
@@ -1679,10 +1959,18 @@ while (True):
 				
 				if not '"name"' in tc_parts[0]:
 					if tc_parts[0] != '': tc_resp += tc_parts[0] + "\n"
+					if len(tc_parts) > 1 and tc_parts[1] != '':
+						tc_resp += tc_parts[1] + "\n"
+						messages.append({"role":bot_name, "content":tc_parts[1]})
+						redo_count += 1
 					continue
 				
-				tc_arg_key = "arguments"
+				if tool_mode != "roleplay":
+					tc_resp += "<tool_call>" + SafeString(tc_parts[0]) + "</tool_call>\n"
+				
+				tr_data = ''
 				tc_data = json.loads(tc_parts[0])
+				tc_arg_key = "arguments"
 				tc_error = False
 				tool_call = None
 				redo_count += 1
@@ -1705,17 +1993,19 @@ while (True):
 				if use_tool_template and not tc_error:
 					messages.append({"role": bot_name, "tool_calls": [{"type": "function", "function": tool_call}]})
 				else:
-					messages.append({"role": bot_name, "content": "<tool_call>" + tc_parts[0] + "</tool_call>"})
+					messages.append({"role": bot_name, "content": tc_parts[0]})
 				
 				if tc_error:
 					tc_error = True
 					tc_errors += 1
 					redo_count += 1
 					
+					tr_data = '{"name": "unknown", "content": "ERROR: unknown tool call format"}'
+					
 					if use_tool_template:
 						messages.append({"role": "tool", "name": "unknown", "content": "ERROR: unknown tool call format"})
 					else:
-						messages.append({"role": bot_name, "content": '<tool_response>{"name": "unknown", "content": "ERROR: unknown tool call format"}</tool_response>'})
+						messages.append({"role": bot_name, "content": "<tool_response>"+tr_data+"</tool_response>"})
 				
 				elif tc_result != None:
 						
@@ -1728,11 +2018,13 @@ while (True):
 						tc_error = True
 						tc_errors += 1
 					
+					tr_data = '{"name": "'+tc_data["name"]+'", "content": "'+tc_result+'"}'
+					
 					if tool_mode == "roleplay" and (tc_data["name"] == "show_image" or tc_data["name"] == "set_bio" or tc_data["name"] == "set_scene") and not tc_error:
 					
 						prompt_key = "prompt" if tc_data["name"] == "show_image" else "summary"
 						if tc_result != '' and tc_arg_key in tc_data and prompt_key in tc_data[tc_arg_key]:
-							tc_resp += "[img_box][img]"+tc_result+"[/img] Image prompt: "+tc_data[tc_arg_key][prompt_key]+"[/img_box]"
+							tc_resp += "<aiui_image>"+tc_result+"AIUI_IMG_TXT="+tc_data[tc_arg_key][prompt_key]+"</aiui_image>\n"
 					else:
 						tc_think = True
 						redo_count += 1
@@ -1741,14 +2033,17 @@ while (True):
 							messages.append({"role": "tool", "name": tc_data["name"], "content": tc_result})
 						else:
 							tc_result = tc_result.replace('\\"', '"').replace('"', '\\"')
-							messages.append({"role": bot_name, "content": '<tool_response>{"name": "'+tc_data["name"]+'", "content": "'+tc_result+'"}</tool_response>'})
+							messages.append({"role": bot_name, "content": "<tool_response>"+tr_data+"</tool_response>"})
 							#NOTE: the role should probably be 'tool' or 'system' in this case but most chat templates seem to ignore those roles here
+				
+				if tr_data != '' and tool_mode != "roleplay":
+					tc_resp += "<tool_response>" + SafeString(tr_data) + "</tool_response>\n"
 				
 				if len(tc_parts) > 1 and tc_parts[1].strip() != '':
 					tc_resp += tc_parts[1] + "\n"
 					messages.append({"role":bot_name, "content":tc_parts[1]})
 					redo_count += 1
-			
+
 			tc_resp = tc_resp.strip()
 			if tc_resp != '': tc_response += tc_resp + "\n"
 			
@@ -1758,7 +2053,7 @@ while (True):
 			
 			if tc_think or tc_response == '':
 				in_tokens = TokenizeChat()
-				cmb_response = GenText(in_tokens, temp).replace("\r", '').strip(" \n")
+				cmb_response = GenReply(in_tokens, temp).replace("\r", '').strip(" \n")
 				continue
 			break
 		
@@ -1767,26 +2062,60 @@ while (True):
 		else:
 			messages.append({"role":bot_name, "content":cmb_response})
 			redo_count += 1
-			
+		
 		tts_response = cmb_response
 		anim_done = False
+		think_tags = { "<thoughts>": "</thoughts>", "<think>": "</think>" }
+		tool_tags = { "<tool_call>": "</tool_call>", "<tool_response>": "</tool_response>" }
+		img_tags = { "<ai_image>": "</ai_image>", "<aiui_image>": "</aiui_image>" }
 
-		if enable_bbcode:
-			for bbc_tag in bbc_aimg_tags:
-				bbc_open_tag = "["+bbc_tag+"]"
-				bbc_close_tag = "[/"+bbc_tag+"]"
-				
-				while im_model_id != "" and bbc_open_tag in cmb_response and bbc_close_tag in cmb_response:
-					tag_start = cmb_response.index(bbc_open_tag) + len(bbc_open_tag)
-					tag_end = cmb_response.index(bbc_close_tag)
-					if tag_start >= tag_end: break
-					img_prompt = cmb_response[tag_start:tag_end]
-					img_num = GenImage(img_prompt)
-					if img_num > -1:
-						tts_response = cmb_response.replace(bbc_open_tag+img_prompt+bbc_close_tag, 'Image description: '+img_prompt, 1)
-						cmb_response = cmb_response.replace(bbc_open_tag+img_prompt+bbc_close_tag, "[AI_IMG NUM_"+str(img_num)+"_CHAT_IMG]"+img_prompt+"[AI_IMG END]", 1)
-					else:
+		for xml_open_tag, xml_close_tag in think_tags.items():
+			while xml_open_tag in cmb_response and xml_close_tag in cmb_response:
+				tag_start = cmb_response.index(xml_open_tag) + len(xml_open_tag)
+				tag_end = cmb_response.index(xml_close_tag)
+				if tag_start >= tag_end:
+					cmb_response = cmb_response.replace(tag_end, tag_end.replace('<', 'AI_UI_AMPlt;', 1).replace('>', 'AI_UI_AMPgt;', 1), 1)
+					continue
+				inner_txt = cmb_response[tag_start:tag_end]
+				tts_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, '', 1)
+				cmb_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, "AIUI_THINK_START"+SafeString(inner_txt)+"AIUI_THINK_END", 1)
+
+		for xml_open_tag, xml_close_tag in tool_tags.items():
+			while xml_open_tag in cmb_response and xml_close_tag in cmb_response:
+				tag_start = cmb_response.index(xml_open_tag) + len(xml_open_tag)
+				tag_end = cmb_response.index(xml_close_tag)
+				if tag_start >= tag_end:
+					cmb_response = cmb_response.replace(tag_end, tag_end.replace('<', 'AI_UI_AMPlt;', 1).replace('>', 'AI_UI_AMPgt;', 1), 1)
+					continue
+				inner_txt = cmb_response[tag_start:tag_end]
+				tts_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, '', 1)
+				if xml_open_tag == "<tool_call>":
+					cmb_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, "AIUI_TC_START"+inner_txt+"AIUI_TC_END", 1)
+				else:
+					cmb_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, "AIUI_TR_START"+inner_txt+"AIUI_TR_END", 1)
+
+		for xml_open_tag, xml_close_tag in img_tags.items():
+			while xml_open_tag in cmb_response and xml_close_tag in cmb_response:
+				tag_start = cmb_response.index(xml_open_tag) + len(xml_open_tag)
+				tag_end = cmb_response.index(xml_close_tag)
+				if tag_start >= tag_end:
+					cmb_response = cmb_response.replace(tag_end, tag_end.replace('<', 'AI_UI_AMPlt;', 1).replace('>', 'AI_UI_AMPgt;', 1), 1)
+					continue
+				inner_txt = cmb_response[tag_start:tag_end]
+				if xml_open_tag == "<ai_image>":
+					img_file = GenImage(inner_txt)
+					if img_file.startswith("ERROR:"):
+						tts_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, img_file, 1)
+						cmb_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, img_file, 1)
 						break
+					else:
+						tts_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, 'Image prompt: '+inner_txt, 1)
+						cmb_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, "AIUI_IMG_SRC="+img_file+"AIUI_IMG_TXT="+inner_txt+"AIUI_IMG_END", 1)
+				else:
+					inner_parts = inner_txt.split("AIUI_IMG_TXT=")
+					inner_prompt = "invalid image prompt detected" if len(inner_parts) < 2 else inner_parts[1]
+					tts_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, 'Image prompt: '+inner_prompt, 1)
+					cmb_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, "AIUI_IMG_SRC="+inner_txt+"AIUI_IMG_END", 1)
 
 		if do_talk and tts_ready and tts_response != '':
 			tts_response = NormalizeText(tts_response)
@@ -1809,15 +2138,8 @@ while (True):
 			print("BOT_NOANIM:"+cmb_response.replace("\n", "[AI_UI_BR]"), flush=True)
 
 		time.sleep(0.1)
-		got_res = True
 		r += 1
 		break #NOTE: disabled multiple bot responses for now
-
-	if not got_res:
-		print("BOT_NOANIM:"+response_error, flush=True)
-		messages.append({"role":bot_name, "content":response_error})
-		redo_count += 1
-		time.sleep(0.1)
 	
 	chat_files = []
 	PrunePrompt()

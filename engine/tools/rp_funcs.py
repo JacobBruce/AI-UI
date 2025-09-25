@@ -37,7 +37,7 @@ def roll_dice(max: int=6, min: int=1) -> int:
 def show_image(prompt: str, target: str=''):
 	"""
 	Generates an image from a prompt using AI and then displays it to the player.
-	Use to help the player visual characters and events taking place in the roleplay world.
+	Helps the player visualize characters and events taking place in the roleplay world.
 	Will generate an image of the target character if a target is provided.
     
 	Args:
@@ -58,14 +58,14 @@ def get_date() -> str:
 	"""Get the current date of the roleplay world in year-month-day format."""
 	return '{year}-{month}-{day}'.format(year=WORLD_YEAR, month=WORLD_MONTH, day=WORLD_DAY)
 
-def set_date(day: int, month: int, year: int):
+def set_date(year: int, month: int=1, day: int=1):
 	"""
 	Set the current date of the roleplay world.
     
 	Args:
-		day: The day of the month (starting at 1)
-		month: The month of the year (starting at 1)
 		year: The year
+		month: The month of the year, starting at 1. Optional (default=1)
+		day: The day of the month, starting at 1. Optional (default=1)
 	"""
 	global WORLD_DAY, WORLD_MONTH, WORLD_YEAR, WORLD_DATE
 	WORLD_DAY = day
@@ -621,197 +621,79 @@ def CallToolFunc(func_name, func_args, aiui_funcs):
 		if "data_store" in func_args and isinstance(func_args['data_store'], str):
 			func_args['data_store'] = func_args['data_store'].lower()
 		if func_name == "roll_dice":
-			if "max" in func_args and "min" in func_args:
-				return roll_dice(func_args['max'], func_args['min'])
-			elif "max" in func_args:
-				return roll_dice(func_args['max'])
-			elif "min" in func_args:
-				return roll_dice(min=func_args['min'])
-			else:
-				return roll_dice()
+			return roll_dice(**func_args)
 		elif func_name == "get_date":
 			return get_date()
 		elif func_name == "set_date":
-			return set_date(func_args['day'], func_args['month'], func_args['year'])
+			return set_date(**func_args)
 		elif func_name == "shift_date":
-			if "months" in func_args and "years" in func_args:
-				return shift_date(func_args['days'], func_args['months'], func_args['years'])
-			elif "months" in func_args:
-				return shift_date(func_args['days'], func_args['months'])
-			elif "years" in func_args:
-				return shift_date(func_args['days'], years=func_args['years'])
-			else:
-				return shift_date(func_args['days'])
+			return shift_date(**func_args)
 		elif func_name == "get_targets":
-			if "data_store" in func_args:
-				return get_targets(func_args['data_store'])
-			else:
-				return get_targets()
+			return get_targets(**func_args)
 		elif func_name == "get_stats":
-			if "target" in func_args:
-				return get_stats(func_args['target'])
-			else:
-				return get_stats()
+			return get_stats(**func_args)
 		elif func_name == "get_stat":
-			if "target" in func_args:
-				return get_stat(func_args['stat_name'], func_args['target'])
-			else:
-				return get_stat(func_args['stat_name'])
+			return get_stat(**func_args)
 		elif func_name == "set_stat":
-			if "target" in func_args and "set_default" in func_args:
-				return set_stat(func_args['stat_name'], func_args['stat_value'], func_args['target'], func_args['set_default'])
-			elif "target" in func_args:
-				return set_stat(func_args['stat_name'], func_args['stat_value'], func_args['target'])
-			elif "set_default" in func_args:
-				return set_stat(func_args['stat_name'], func_args['stat_value'], set_default=func_args['set_default'])
-			else:
-				return set_stat(func_args['stat_name'], func_args['stat_value'])
+			return set_stat(**func_args)
 		elif func_name == "reset_stat":
-			if "target" in func_args:
-				return reset_stat(func_args['stat_name'], func_args['target'])
-			else:
-				return reset_stat(func_args['stat_name'])
+			return reset_stat(**func_args)
 		elif func_name == "shift_stat":
-			if "target" in func_args and "limit" in func_args:
-				return shift_stat(func_args['stat_name'], func_args['shift_value'], func_args['target'], func_args['limit'])
-			elif "target" in func_args:
-				return shift_stat(func_args['stat_name'], func_args['shift_value'], func_args['target'])
-			elif "limit" in func_args:
-				return shift_stat(func_args['stat_name'], func_args['shift_value'], limit=func_args['limit'])
-			else:
-				return shift_stat(func_args['stat_name'], func_args['shift_value'])
+			return shift_stat(**func_args)
 		elif func_name == "get_traits":
-			if "target" in func_args:
-				return get_traits(func_args['target'])
-			else:
-				return get_traits()
+			return get_traits(**func_args)
 		elif func_name == "get_trait":
-			if "target" in func_args:
-				return get_trait(func_args['trait_name'], func_args['target'])
-			else:
-				return get_trait(func_args['trait_name'])
+			return get_trait(**func_args)
 		elif func_name == "set_trait":
-			if "target" in func_args:
-				return set_trait(func_args['trait_name'], func_args['summary'], func_args['target'])
-			else:
-				return set_trait(func_args['trait_name'], func_args['summary'])
+			return set_trait(**func_args)
 		elif func_name == "get_items":
-			if "target" in func_args:
-				return get_items(func_args['target'])
-			else:
-				return get_items()
+			return get_items(**func_args)
 		elif func_name == "count_item":
-			if "target" in func_args:
-				return count_item(func_args['item_name'], func_args['target'])
-			else:
-				return count_item()
+			return count_item(**func_args)
 		elif func_name == "store_item":
-			item_src = func_args['source'] if "source" in func_args else ''
-			if "quantity" in func_args and "target" in func_args:
-				return store_item(func_args['item_name'], func_args['quantity'], func_args['target'], item_src)
-			elif "quantity" in func_args:
-				return store_item(func_args['item_name'], func_args['quantity'], source=item_src)
-			elif "target" in func_args:
-				return store_item(func_args['item_name'], target=func_args['target'], source=item_src)
-			else:
-				return store_item(func_args['item_name'], source=item_src)
+			return store_item(**func_args)
 		elif func_name == "use_item":
-			if "quantity" in func_args and "target" in func_args:
-				return use_item(func_args['item_name'], func_args['quantity'], func_args['target'])
-			elif "quantity" in func_args:
-				return use_item(func_args['item_name'], func_args['quantity'])
-			elif "target" in func_args:
-				return use_item(func_args['item_name'], target=func_args['target'])
-			else:
-				return use_item()
+			return use_item(**func_args)
 		elif func_name == "get_equipment":
-			if "target" in func_args:
-				return get_equipment(func_args['target'])
-			else:
-				return get_equipment()
+			return get_equipment(**func_args)
 		elif func_name == "equip_item":
-			item_src = func_args['source'] if "source" in func_args else ''
-			if "item_slot" in func_args and "target" in func_args:
-				return equip_item(func_args['item_name'], func_args['item_slot'], func_args['target'], item_src)
-			elif "item_slot" in func_args:
-				return equip_item(func_args['item_name'], func_args['item_slot'], source=item_src)
-			elif "target" in func_args:
-				return equip_item(func_args['item_name'], target=func_args['target'], source=item_src)
-			else:
-				return equip_item(func_args['item_name'], source=item_src)
+			return equip_item(**func_args)
 		elif func_name == "unequip_item":
-			if "target" in func_args:
-				return unequip_item(func_args['item_slot'], func_args['target'])
-			else:
-				return unequip_item(func_args['item_slot'])
+			return unequip_item(**func_args)
 		elif func_name == "get_relations":
-			if "target" in func_args:
-				return get_relations(func_args['target'])
-			else:
-				return get_relations()
+			return get_relations(**func_args)
 		elif func_name == "get_relation":
-			if "source" in func_args:
-				return get_relation(func_args['target'], func_args['source'])
-			else:
-				return get_relation(func_args['target'])
+			return get_relation(**func_args)
 		elif func_name == "set_relation":
-			if "source" in func_args:
-				return set_relation(func_args['summary'], func_args['target'], func_args['source'])
-			else:
-				return set_relation(func_args['summary'], func_args['target'])
+			return set_relation(**func_args)
 		elif func_name == "get_npcs":
 			return get_npcs()
 		elif func_name == "get_bio":
-			if "target" in func_args:
-				return get_bio(func_args['target'])
-			else:
-				return get_bio()
+			return get_bio(**func_args)
 		elif func_name == "set_bio":
 			IMG_IS_CHAR = True
-			if "target" in func_args:
-				set_bio(func_args['summary'], func_args['target'])
-			else:
-				set_bio(func_args['summary'])
+			set_bio(**func_args)
 			return IMG_FILE
 		elif func_name == "get_history":
-			if "target" in func_args and "max" in func_args:
-				return get_history(func_args['target'], func_args['max'])
-			elif "target" in func_args:
-				return get_history(func_args['target'])
-			elif "max" in func_args:
-				return get_history(max=func_args['max'])
-			else:
-				return get_history()
+			return get_history(**func_args)
 		elif func_name == "add_history":
-			if "target" in func_args:
-				return add_history(func_args['summary'], func_args['target'])
-			else:
-				return add_history(func_args['summary'])
+			return add_history(**func_args)
 		elif func_name == "get_places":
 			return get_places()
 		elif func_name == "get_scene":
-			if "location" in func_args:
-				return get_scene(func_args['location'])
-			else:
-				return get_scene()
+			return get_scene(**func_args)
 		elif func_name == "set_scene":
 			IMG_IS_CHAR = False
-			if "location" in func_args:
-				set_scene(func_args['summary'], func_args['location'])
-			else:
-				set_scene(func_args['summary'])
+			set_scene(**func_args)
 			return IMG_FILE
 		elif func_name == "show_image":
 			IMG_IS_CHAR = False
-			if "target" in func_args:
-				show_image(func_args['prompt'], func_args['target'])
-			else:
-				show_image(func_args['prompt'])
+			show_image(**func_args)
 			return IMG_FILE
 		else:
 			return "ERROR: unknown function"
-	except:
-		return "ERROR: invalid argument"
+	except Exception as e:
+		return f"ERROR: an exception occured ({e})"
 
 def GetToolFuncs():
 	return [

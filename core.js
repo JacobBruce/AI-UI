@@ -2,14 +2,14 @@ const process = require('child_process');
 const fs = require('fs');
 
 var CHAT_CONFIG = { human_name: 'Human', bot_name: 'Bot', bot_voice: 0, speech_vol: 1.0, speech_rate: 200, pitch_shift: 0, talk_mode: 0, tts_mode: 0, anim_mode: 0 };
-var AI_CONFIG = { msg_mem: 5, max_res: 50, min_res: 1, base_temp: 0.8, prompt_p: 0, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0, temp_format: 'none', tools_file: 'custom' };
+var AI_CONFIG = { msg_mem: 10, max_res: 1000, min_res: 1, do_sample: 1, num_beams: 1, beam_groups: 1, base_temp: 0.8, prompt_p: 0, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0, temp_format: 'none', tools_file: 'custom' };
 var APP_CONFIG = {
 	avatar_img: '', script_dir: '', python_bin: '', model_dir: '', sd_model: '', tts_model: '', sr_model: '', model_args: '', model_type: 0, imodel_type: 0, smodel_type: 0, comp_dev: 'auto', start_meth: 'text', //main
-	enable_bbcode: 1, enable_tooluse: 1, enable_devmode: 0, enable_asasro: 0, start_rec_keys: '', stop_rec_keys: '' //other
+	format_mode: 0, gen_mode: 0, enable_tooluse: 1, enable_devmode: 0, enable_asasro: 0, start_rec_keys: '', stop_rec_keys: '', hf_token: '' //other
 };
 var GEN_CONFIG = { 
-	prompt_text: '', prompt_neg: '', image_width: 'auto', image_height: 'auto', inference_steps: 50, guidance_scale: 7.5, safety_check: 1, vae_file: '', lora_file: '', lora_dir: '', lora_scale: 1.0, //image
-	max_len: 50, min_len: 1, temp: 0.8, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0, //text
+	prompt_text: '', prompt_neg: '', image_seed: '', image_width: 'auto', image_height: 'auto', inference_steps: 50, guidance_scale: 7.5, safety_check: 1, vae_file: '', lora_file: '', lora_dir: '', lora_scale: 1.0, //image
+	max_len: 1000, min_len: 1, do_sample: 1, num_beams: 1, beam_groups: 1, temp: 0.8, top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0, //text
 	tts_voice: 0, tts_vol: 1.0, tts_rate: 200, tts_pitch: 0, tts_mode: 0 //speech
 };
 
@@ -31,6 +31,8 @@ var CLONE_TEXT = '';
 var INIT_PROMPT = '';
 var TTS_TEXT = '';
 var TTS_MODES = ['SYS', 'AI'];
+var FORCE_STOP = false;
+var GEN_STREAM = false;
 
 function EngineRunning() {
 	return (ENGINE_STATE == 'STARTED' || ENGINE_STATE == 'RESTART');
@@ -102,6 +104,10 @@ function SetChatFiles(chat_files) {
 	CHAT_FILES = chat_files;
 }
 
+function ForceStopBot() {
+	FORCE_STOP = true;
+}
+
 function ConfigSpeech(speech_config) {
 	CHAT_CONFIG.bot_voice = speech_config.voice;
 	CHAT_CONFIG.speech_vol = speech_config.vol;
@@ -120,6 +126,9 @@ function ConfigAI(ai_config) {
 	AI_CONFIG.msg_mem = ai_config.max_mmem;
 	AI_CONFIG.max_res = ai_config.max_rlen;
 	AI_CONFIG.min_res = ai_config.min_rlen;
+	AI_CONFIG.do_sample = ai_config.do_sample;
+	AI_CONFIG.num_beams = ai_config.num_beams;
+	AI_CONFIG.beam_groups = ai_config.beam_groups;
 	AI_CONFIG.base_temp = ai_config.temp;
 	AI_CONFIG.prompt_p = ai_config.pp;
 	AI_CONFIG.top_k = ai_config.tk;
@@ -141,15 +150,20 @@ function ConfigApp(app_config) {
 	APP_CONFIG.sr_model = app_config.sr_model;
 	APP_CONFIG.comp_dev = app_config.comp_dev;
 	APP_CONFIG.start_meth = app_config.start_meth;
-	APP_CONFIG.enable_bbcode = app_config.enable_bbcode;
-	APP_CONFIG.enable_tooluse = app_config.enable_tooluse;
 }
 
-function ConfigOther(app_config) {
-	APP_CONFIG.enable_devmode = app_config.enable_devmode;
-	APP_CONFIG.enable_asasro = app_config.enable_asasro;
-	APP_CONFIG.start_rec_keys = app_config.start_rec_keys;
-	APP_CONFIG.stop_rec_keys = app_config.stop_rec_keys;
+function ConfigOther(app_config, app_other=false) {
+	if (app_other) {
+		APP_CONFIG.gen_mode = app_config.gen_mode;
+		APP_CONFIG.format_mode = app_config.format_mode;
+		APP_CONFIG.enable_tooluse = app_config.enable_tooluse;
+		APP_CONFIG.hf_token = app_config.hf_token;
+	} else {
+		APP_CONFIG.enable_devmode = app_config.enable_devmode;
+		APP_CONFIG.enable_asasro = app_config.enable_asasro;
+		APP_CONFIG.start_rec_keys = app_config.start_rec_keys;
+		APP_CONFIG.stop_rec_keys = app_config.stop_rec_keys;
+	}
 }
 
 function ConfigGen(gen_config) {
@@ -158,6 +172,7 @@ function ConfigGen(gen_config) {
 		GEN_CONFIG.prompt_neg = gen_config.neg_prompt;
 		GEN_CONFIG.guidance_scale = gen_config.guidance;
 		GEN_CONFIG.inference_steps = gen_config.steps;
+		GEN_CONFIG.image_seed = gen_config.seed;
 		GEN_CONFIG.image_width = gen_config.width;
 		GEN_CONFIG.image_height = gen_config.height;
 		GEN_CONFIG.safety_check = gen_config.check;
@@ -175,6 +190,9 @@ function ConfigGen(gen_config) {
 		GEN_CONFIG.prompt_text = gen_config.txt;
 		GEN_CONFIG.max_len = gen_config.max;
 		GEN_CONFIG.min_len = gen_config.min;
+		GEN_CONFIG.do_sample = gen_config.do_sp;
+		GEN_CONFIG.num_beams = gen_config.num_b;
+		GEN_CONFIG.beam_groups = gen_config.num_g;
 		GEN_CONFIG.temp = gen_config.temp;
 		GEN_CONFIG.top_k = gen_config.top_k;
 		GEN_CONFIG.top_p = gen_config.top_p;
@@ -183,8 +201,8 @@ function ConfigGen(gen_config) {
 	}
 }
 
-function SetCallbacks(bot_out_func, gen_out_func, tts_out_func, asr_out_func, img_out_func, clone_out_func, ai_ready_func, 
-ai_ended_func, add_voices_func, clear_voices_func, play_audio_func, append_log_func, avatar_got_func, got_tools_func) {
+function SetCallbacks(bot_out_func, gen_out_func, tts_out_func, asr_out_func, img_out_func, clone_out_func, ai_ready_func, ai_ended_func, 
+add_voices_func, clear_voices_func, play_audio_func, append_log_func, avatar_got_func, got_tools_func, stream_start_func, stream_text_func) {
 	if (CB_FUNCS === null) {
 		CB_FUNCS = {
 			bot_out: bot_out_func,
@@ -200,7 +218,9 @@ ai_ended_func, add_voices_func, clear_voices_func, play_audio_func, append_log_f
 			play_audio: play_audio_func,
 			append_log: append_log_func,
 			avatar_got: avatar_got_func,
-			got_tools: got_tools_func
+			got_tools: got_tools_func,
+			stream_start: stream_start_func,
+			stream_text: stream_text_func
 		};
 	}
 }
@@ -220,7 +240,7 @@ function LogToConsole(msg) {
 }
 
 function SendMsg(message, req_state='HUMAN_INPUT') {
-	if (AI_ENGINE === null) {
+	if (AI_ENGINE === null || ENGINE_STATE != 'STARTED') {
 		LogToConsole('ERROR: AI Engine not initialized');
 		return;
 	}
@@ -351,7 +371,32 @@ function StartScript() {
 	AI_ENGINE.stdout.on('data', function (data) {
 		const out_str = data.toString().trim();
 		LogToConsole('STDOUT: '+out_str);
-		if (out_str == 'HUMAN_INPUT:') {
+		if (CHAT_STATE == 'TEXT_STREAM') {
+			if (out_str == '[AIUI_STREAM_END]') {
+				CHAT_STATE = 'STREAM_END';
+			} else if (out_str.startsWith('STREAM_WORD:')) {
+				if (FORCE_STOP) {
+					FORCE_STOP = false;
+					CHAT_STATE = 'STOP_STREAM';
+					AI_ENGINE.stdin.write('STOP_STREAM'+ENDL);
+					LogToConsole('STDIN: STOP_STREAM');
+				} else {
+					AI_ENGINE.stdin.write('STREAMING'+ENDL);
+					LogToConsole('STDIN: STREAMING');
+				}
+				CB_FUNCS.stream_text(out_str.replace('STREAM_WORD:', ''), GEN_STREAM);
+			}
+			return;
+		}
+		if (out_str == 'TEXT_STREAM:') {
+			CHAT_STATE = 'TEXT_STREAM';
+			GEN_STREAM = false;
+			CB_FUNCS.stream_start(false);
+		} else if (out_str == 'GEN_STREAM:') {
+			CHAT_STATE = 'TEXT_STREAM';
+			GEN_STREAM = true;
+			CB_FUNCS.stream_start(true);
+		} else if (out_str == 'HUMAN_INPUT:') {
 			CHAT_STATE = 'HUMAN_INPUT';
 			CB_FUNCS.ai_ready();
 		} else if (out_str.startsWith('BOT_NOANIM:')) {
@@ -420,6 +465,12 @@ function StartScript() {
 			AI_ENGINE.stdin.write(GEN_CONFIG.max_len+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.min_len);
 			AI_ENGINE.stdin.write(GEN_CONFIG.min_len+ENDL);
+			LogToConsole('STDIN: '+GEN_CONFIG.do_sample);
+			AI_ENGINE.stdin.write(GEN_CONFIG.do_sample+ENDL);
+			LogToConsole('STDIN: '+GEN_CONFIG.num_beams);
+			AI_ENGINE.stdin.write(GEN_CONFIG.num_beams+ENDL);
+			LogToConsole('STDIN: '+GEN_CONFIG.beam_groups);
+			AI_ENGINE.stdin.write(GEN_CONFIG.beam_groups+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.temp);
 			AI_ENGINE.stdin.write(GEN_CONFIG.temp+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.top_k);
@@ -442,6 +493,8 @@ function StartScript() {
 			AI_ENGINE.stdin.write(GEN_CONFIG.guidance_scale+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.safety_check);
 			AI_ENGINE.stdin.write(GEN_CONFIG.safety_check+ENDL);
+			LogToConsole('STDIN: '+GEN_CONFIG.image_seed);
+			AI_ENGINE.stdin.write(GEN_CONFIG.image_seed+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.image_width);
 			AI_ENGINE.stdin.write(GEN_CONFIG.image_width+ENDL);
 			LogToConsole('STDIN: '+GEN_CONFIG.image_height);
@@ -496,6 +549,12 @@ function StartScript() {
 			AI_ENGINE.stdin.write(AI_CONFIG.max_res+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.min_res);
 			AI_ENGINE.stdin.write(AI_CONFIG.min_res+ENDL);
+			LogToConsole('STDIN: '+AI_CONFIG.do_sample);
+			AI_ENGINE.stdin.write(AI_CONFIG.do_sample+ENDL);
+			LogToConsole('STDIN: '+AI_CONFIG.num_beams);
+			AI_ENGINE.stdin.write(AI_CONFIG.num_beams+ENDL);
+			LogToConsole('STDIN: '+AI_CONFIG.beam_groups);
+			AI_ENGINE.stdin.write(AI_CONFIG.beam_groups+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.base_temp);
 			AI_ENGINE.stdin.write(AI_CONFIG.base_temp+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.prompt_p);
@@ -514,6 +573,16 @@ function StartScript() {
 			AI_ENGINE.stdin.write(AI_CONFIG.temp_format+ENDL);
 			LogToConsole('STDIN: '+AI_CONFIG.tools_file);
 			AI_ENGINE.stdin.write(AI_CONFIG.tools_file+ENDL);
+		} else if (out_str == 'OTHER_CONFIG:') {
+			CHAT_STATE = 'OTHER_CONFIG';
+			LogToConsole('STDIN: '+APP_CONFIG.gen_mode);
+			AI_ENGINE.stdin.write(APP_CONFIG.gen_mode+ENDL);
+			LogToConsole('STDIN: '+APP_CONFIG.format_mode);
+			AI_ENGINE.stdin.write(APP_CONFIG.format_mode+ENDL);
+			LogToConsole('STDIN: '+APP_CONFIG.enable_tooluse);
+			AI_ENGINE.stdin.write(APP_CONFIG.enable_tooluse+ENDL);
+			LogToConsole('STDIN: '+APP_CONFIG.hf_token);
+			AI_ENGINE.stdin.write(APP_CONFIG.hf_token+ENDL);
 		} else if (out_str == 'APP_CONFIG:') {
 			CHAT_STATE = 'APP_CONFIG';
 			LogToConsole('STDIN: '+APP_CONFIG.script_dir);
@@ -538,10 +607,6 @@ function StartScript() {
 			AI_ENGINE.stdin.write(APP_CONFIG.comp_dev+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.start_meth);
 			AI_ENGINE.stdin.write(APP_CONFIG.start_meth+ENDL);
-			LogToConsole('STDIN: '+APP_CONFIG.enable_bbcode);
-			AI_ENGINE.stdin.write(APP_CONFIG.enable_bbcode+ENDL);
-			LogToConsole('STDIN: '+APP_CONFIG.enable_tooluse);
-			AI_ENGINE.stdin.write(APP_CONFIG.enable_tooluse+ENDL);
 			LogToConsole('STDIN: '+APP_CONFIG.avatar_img);
 			AI_ENGINE.stdin.write(APP_CONFIG.avatar_img+ENDL);
 		} else if (out_str.startsWith('PLAY_SPEECH:')) {
@@ -627,6 +692,7 @@ module.exports = {
 	setChatFiles: SetChatFiles,
 	setCloneVoice: SetCloneVoice,
 	setSaveFile: SetSaveFile,
+	forceStopBot: ForceStopBot,
 	engineRunning: EngineRunning,
 	runCommand: RunCommand
 };

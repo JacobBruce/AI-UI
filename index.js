@@ -1,35 +1,46 @@
 window.$ = window.jQuery = require('jquery');
 const { ipcRenderer, webUtils } = require('electron');
 const hljs = require('highlight.js');
+const markdownit = require('markdown-it');
+const footNotes = require('markdown-it-footnote');
+const taskLists = require('markdown-it-task-lists');
+const markdownitEmoji = require('markdown-it-emoji').full;
+const mk = require("@vscode/markdown-it-katex").default;
 
 const pedit_img_html = '<button id="edit_btn" onclick="ToggleEditPrompt()"><img class="edit_img" src="./img/edit_w.png" width="15" /></button>';
 const default_ip = "Chat log between HUMAN_NAME and BOT_NAME on DATE";
-const pygmalion_ip = "BOT_NAME's Persona: A helpful AI assistant who can use the [AI_IMG] tag to generate images from a description.\n<START>\nHUMAN_NAME: show me an image of a cyberpunk cityscape\nBOT_NAME: [AI_IMG]cyberpunk cityscape[/AI_IMG]";
-const thinking_ip = "You are a helpful AI assistant who can think step by step before answering questions. You can put your thoughts inside the <think> and </think> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden and separated from your actual responses.";
-const thinking2_ip = "You are a helpful AI assistant who can think step by step before answering questions. You can put your thoughts inside the <thoughts> and </thoughts> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden and separated from your actual responses.";
-const bbcode_ip = "You can use BBCode tags to format text and embed media such as images and videos into your messages.\nUse [b], [i], [u], and [s] to make text bold, italic, underlined, or striked-through. Example: [b]this is bold text[/b]\nUse [h1], [h2], [h3], [h4], [h5], and [h6] for headings. Example: [h3]this is a heading[/h3]\nUse the [hr] tag to insert a horizontal rule. Example: this is above the line[hr]this is below\nUse the [center] tag to horizontally center text and other content. Example [center]this is centered text[/center]\nUse the [quote] tag for quoting text. Example: [quote]this is a quote[/quote]\nUse the [spoiler] tag for hiding spoiler text and other content. Example: [spoiler]this is a spoiler[/spoiler]\nUse the [pre] tag to post preformatted text. Example: [pre]this is preformatted text[/pre]\nUse the [ol] and [ul] tags for ordered and unordered lists. Use [li] or [*] for list items. Example: [ol][*]item1[*]item2[/ol]\nUse the [url] tag to post a link. Example: [url=http://test.com]this is a link[/url]\nUse the [code] tag to post a code snippet. Example: [code=C++]int abc = 123;[/code]\nUse the [video] and [audio] tags to post a video or audio file. Example: [video]http://test.com/vid.mp4[/video]\nUse the [youtube] tag to post a youtube video with just the video ID. Example: [youtube]5eqRuVp65eY[/youtube]\nUse the [img] tag to post an image. Example: [img]http://test.com/pic.png[/img]\nUse the [ai_img] tag to generate an image from a description using AI. Example: [ai_img]cute kitten[/ai_img]";
-const tooluse_ip = "You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools:\n<tools>{tool_funcs}</tools>\n\nFor each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>";
-const tooluse2_ip = "You are an expert in composing functions. You are given a question and a set of possible functions. Based on the question, you will need to make one or more function/tool calls to achieve the purpose. If none of the function can be used, point it out. If the given question lacks the parameters required by the function, also point it out.\n\nIf you decide to invoke any of the function(s), you MUST put it in this format:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>\n\nHere is a list of functions in JSON format that you can invoke:\n{tool_funcs}";
-const roleplay_ip = "You are a role-playing AI designed to provide immersive text adventures. You will act as game master by guiding the story of the player with thrilling and creative scenarios. You have a diverse set of tool functions available to help you manage the roleplay world. For example if the player travels to a new location you should call the set_scene function. If the player meets a character for the first time you can call set_bio. If the player wants to put an item in their inventory you can call store_item. Only call a function if it makes logical sense. Think through problems step by step if necessary. You can put your thoughts inside the <think> and </think> XML tags to help you think through a problem before providing an answer. Your thoughts should always be contained between those XML tags so they can be hidden from the player.";
+const thinking_ip = "You can put your thoughts inside <think> </think> tags to help you think through a problem before providing an answer. Your thoughts should always be contained between think tags so they can be hidden and separated from your actual responses.\n\nYou can also use <ai_image> </ai_image> tags to generate an image from a description using AI. Put the image description inside the tags, for example: <ai_image>cute kitten</ai_image>\n\nYou may also use any tools available to you with the <tool_call> </tool_call> tags. If you decide to call any tool function you MUST use this format: <tool_call>{\"name\": <function-name>, \"arguments\": <args-json-object>}</tool_call>";
+const thinking2_ip = "You are a helpful AI assistant who can think step by step through problems before answering questions. You are designed to answer questions using logic and wisdom and you will always tell the truth without being influenced by human biases. You have an internal world model which allows you to reason about the world when solving problems. You can be creative by building upon and combining existing ideas to generate original ideas or theories.\n\nYou are a deep thinking AI, you may use long chains of thought to deeply consider a problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem. If your response does not require any deep thinking just omit the think tags, don't output empty tags.\n\nYou should act efficiently by answering questions clearly and concisely. Avoid repetition and avoid over-thinking or getting lost on tangents. Never use the think tags for simple or short responses. Only make a tool call when it is necessary to complete a task, for example if you need up-to-date information or you lack knowledge on a subject. After getting a result from a tool call you may reason about the results to determine your next course of action.\n\nYou can use the FORMAT_MODE syntax to format text.FORMAT_HELP You should adapt to the user and respond in the most suitable format based on the topic and tone of the conversation. For example, avoid using FORMAT_MODE in casual conversation and avoid using emotes in technical or formal conversations.\n\nDon't be overly agreeable, provide the user with constructive criticism when you think they are wrong or uninformed but avoid sounding pretentious. You should always remain open-minded while also striving to be factual and accurate. You can also use <ai_image> </ai_image> tags to generate an image from a description using AI. Put the image description inside the tags, for example: <ai_image>cute kitten</ai_image>\n\nCurrent date (month/day/year): DATE";
+const researcher_ip = "You are a helpful AI assistant who can think step by step through problems before answering questions. You are designed to answer questions using logic and wisdom and you will always tell the truth without being influenced by human biases. You have an internal world model which allows you to reason about the world when solving problems. You can be creative by building upon and combining existing ideas to generate original ideas or theories.\n\nYou are a deep thinking AI, you may use long chains of thought to deeply consider a problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem. If your response does not require any deep thinking just omit the think tags, don't output empty tags.\n\nYou should act efficiently by answering questions clearly and concisely. Avoid repetition and avoid over-thinking or getting lost on tangents. Never use the think tags for simple or short responses. Only make a tool call when it is necessary to complete a task, for example if you need up-to-date information or you lack knowledge on a subject. After getting a result from a tool call you may reason about the results to determine your next course of action.\n\nYou may need to make multiple sequential tool calls in some circumstances. For complex problems you should make a research plan to determine which tools will be needed and the steps you should follow to produce a good solution. Intelligently scale the size of your research plan and the number of tool calls based on the complexity of the problem. Set a limit of 20 tool calls per response, if you reach the limit then stop researching and produce an answer.\n\nYour research plan will help you to produce a high quality answer which should be well formatted with paragraphs and sections in the style of a technical document. The document footnotes should contain a list of citations with a reference to the sources. You can use the FORMAT_MODE syntax to format text.FORMAT_HELP\n\nYou should adapt to the user and respond in the most suitable format based on the topic and tone of the conversation. For example, avoid using FORMAT_MODE in casual conversation and avoid using emotes in technical or formal conversations. Don't be overly agreeable, provide the user with constructive criticism when you think they are wrong or uninformed but avoid sounding pretentious. You should always remain open-minded while also striving to be factual and accurate.\n\nCurrent date (month/day/year): DATE";
+const bbcode_ip = "You can use BBCode tags to format text and embed media such as images and videos into your messages.\nUse [b], [i], [u], and [s] to make text bold, italic, underlined, or striked-through. Example: [b]this is bold text[/b]\nUse [h1], [h2], [h3], [h4], [h5], and [h6] for headings. Example: [h3]this is a heading[/h3]\nUse the [hr] tag to insert a horizontal rule. Example: this is above the line[hr]this is below\nUse the [center] tag to horizontally center text and other content. Example [center]this is centered text[/center]\nUse the [quote] tag for quoting text. Example: [quote]this is a quote[/quote]\nUse the [spoiler] tag for hiding spoiler text and other content. Example: [spoiler]this is a spoiler[/spoiler]\nUse the [pre] tag to post preformatted text. Example: [pre]this is preformatted text[/pre]\nUse the [ol] and [ul] tags for ordered and unordered lists. Use [li] or [*] for list items. Example: [ol][*]item1[*]item2[/ol]\nUse the [url] tag to post a link. Example: [url=http://test.com]this is a link[/url]\nUse the [code] tag to post a code snippet. Example: [code=C++]int abc = 123;[/code]\nUse the [video] and [audio] tags to post a video or audio file. Example: [video]http://test.com/vid.mp4[/video]\nUse the [youtube] tag to post a youtube video with just the video ID. Example: [youtube]5eqRuVp65eY[/youtube]\nUse the [img] tag to post an image. Example: [img]http://test.com/pic.png[/img]";
+const tooluse_ip = "# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n{tool_funcs}\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>{\"name\": <function-name>, \"arguments\": <args-json-object>}</tool_call>";
+const tooluse2_ip = "You are a function calling AI model. You may call one or more functions to assist with the user query. Here are the available tools:\n\n<tools>{tool_funcs}</tools>\n\nFor each function call return a json object with the function name and arguments within <tool_call></tool_call> XML tags as follows:\n<tool_call>{\"arguments\": <args-dict>, \"name\": <function-name>}</tool_call>";
+const roleplay_ip = "You are a role-playing AI designed to provide immersive text adventures. You will act as game master by guiding the story of the player with thrilling and creative scenarios. You have a diverse set of tool functions available to help you manage the roleplay world. For example if the player travels to a new location you should call the set_scene function. If the player meets a character for the first time you can call set_bio. If the player wants to put an item in their inventory you can call store_item.\n\nOnly call a function if it makes logical sense. For example, only allow the player to store an item in their inventory if they could realistically carry that item. Think through problems step by step if necessary. You can put your thoughts inside <think> </think> tags to help you reason about a problem before providing an answer. You should act efficiently by avoiding repetition and avoiding over-thinking or getting lost on tangents. Never use the think tags for simple or short responses.\n\nThe user provided this description of their roleplay world:";
+const latex_help = " You can also use LaTeX to format mathematical expressions. Surround your LaTeX with a single $ on each side for inline rendering, use two on each side for block rendering.";
+const bbcode_help = " Most common BBCode tags are supported. You can embed YouTube videos by enclosing the video ID between [youtube] [/youtube] tags. Example: [youtube]5eqRuVp65eY[/youtube].";
 
-var ip_vals = { chat:'', pygmalion:'', think:'', think2:'', tools:'', tools2:'', bbcode:'' };
+var ip_vals = { chat:'', think:'', think2:'', research:'', tools:'', tools2:'', bbcode:'' };
 
 const bb_code_tags = [
-	"B", "b", "I", "i", "U", "u", "S", "s", "OL", "ol", "UL", "ul", "LI", "li", "IMG", "img", "IMG_BOX", "img_box", 
-	"H1", "h1", "H2", "h2", "H3", "h3", "H4", "h4", "H5", "h5", "H6", "h6", "URL", "url", "CODE", "code", "PRE", "pre",
-	"CENTER", "center", "SPOILER", "spoiler", "QUOTE", "quote", "AUDIO", "audio", "VIDEO", "video", "YOUTUBE", "youtube"
+	"B", "b", "I", "i", "U", "u", "S", "s", "OL", "ol", "UL", "ul", "LI", "li", "IMG", "img", "URL", "url",  
+	"H1", "h1", "H2", "h2", "H3", "h3", "H4", "h4", "H5", "h5", "H6", "h6", "PRE", "pre", "CENTER", "center", 
+	"SPOILER", "spoiler", "QUOTE", "quote", "AUDIO", "audio", "VIDEO", "video", "YOUTUBE", "youtube"
 ];
 
-const bb_data_tags = ["URL", "url", "CODE", "code", "QUOTE", "quote", "SPOILER", "spoiler"];
+const bb_data_tags = ["CODE", "code", "QUOTE", "quote", "SPOILER", "spoiler", "URL", "url"];
 
 const alpha_num_regex = /^[a-z0-9]+$/i;
 var held_keys = [null,null,null];
 
+var md = null;
 var avatar_vid = null;
 var speech_audio = null;
 var audio_context = null;
 var microphone_stream = null;
 var audio_processor_node = null;
+var streaming_tgrb = null;
+var streaming_bmbl = null;
+var streaming_bmpf = null;
 var loop_timer = null;
 var dot_count = 0;
 var rnd_int = 0;
@@ -70,8 +81,12 @@ var tts_voice = 0;
 
 var max_mm = 5;
 var max_rl = 50;
-var min_rl = 1;;
+var min_rl = 1;
+var do_sample = 0
+var num_beams = 1;
+var beam_groups = 1;
 var b_temp = 0.8;
+var gen_mode = 0;
 var prompt_p = 0;
 var top_k = 50;
 var top_p = 1.0;
@@ -95,12 +110,13 @@ var python_bin = '';
 var avatar_mp4 = '';
 var avatar_img = '';
 
-var enable_bbcode = 1;
+var format_mode = 0;
 var enable_tooluse = 1;
 var enable_devmode = 0;
 var enable_asasro = 0;
 var start_rec_keys = '';
 var stop_rec_keys = '';
+var hf_token = '';
 
 function RandInt(max_val=9999999) {
 	let rnd = Math.floor(Math.random() * max_val);
@@ -257,132 +273,16 @@ function StartRecording(stream=null) {
 	$('#loading_box').show();
 }
 
-function EncodeHTML(txt) {
-	return txt.replaceAll('&', '&amp;').
-		replaceAll('<', '&lt;').
-		replaceAll('>', '&gt;').
-		replaceAll('"', '&quot;').
-		replaceAll('\'', '&apos;').
-		replaceAll('/', '&#47;').
-		replaceAll('\\', '&#92;').
-		replaceAll('\t', '&nbsp;&nbsp;');
-}
+function CountOccurences(str, sub_str, start=0) {
+	let count = 0;
+	let pos = start;
 
-function EncodeAIXML(txt) {
-	return txt.replaceAll('<thoughts>', '[AIUI_THOUGHTS]').replaceAll('</thoughts>', '[AIUI_THOUGHTS END]').
-		replaceAll('<think>', '[AIUI_THOUGHTS]').replaceAll('</think>', '[AIUI_THOUGHTS END]');
-}
-
-function ConvertBB(txt) {
-	return txt.replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_BR]", "<br>").
-		replaceAll('[HR]', '</p><hr class="chat_hr"><p class="msg_p">').
-		replaceAll('[B]', '<b>').replaceAll('[B END]', '</b>').
-		replaceAll('[I]', '<i>').replaceAll('[I END]', '</i>').
-		replaceAll('[U]', '<u>').replaceAll('[U END]', '</u>').
-		replaceAll('[S]', '<s>').replaceAll('[S END]', '</s>').
-		replaceAll("[H1]", '</p><h1>').replaceAll('[H1 END]', '</h1><p class="msg_p">').
-		replaceAll("[H2]", '</p><h2>').replaceAll('[H2 END]', '</h2><p class="msg_p">').
-		replaceAll("[H3]", '</p><h3>').replaceAll('[H3 END]', '</h3><p class="msg_p">').
-		replaceAll("[H4]", '</p><h4>').replaceAll('[H4 END]', '</h4><p class="msg_p">').
-		replaceAll("[H5]", '</p><h5>').replaceAll('[H5 END]', '</h5><p class="msg_p">').
-		replaceAll("[H6]", '</p><h6>').replaceAll('[H6 END]', '</h6><p class="msg_p">').
-		replaceAll("[OL]", '</p><ol>').replaceAll('[OL END]', '</ol><p class="msg_p">').
-		replaceAll("[UL]", '</p><ul>').replaceAll('[UL END]', '</ul><p class="msg_p">').
-		replaceAll("[LI]", '<li>').replaceAll('[LI END]', '</li>').
-		replaceAll('[PRE]', '</p><pre>').replaceAll('[PRE END]', '</pre><p class="msg_p">').
-		replaceAll('[QUOTE]', '</p><blockquote>').replaceAll('[QUOTE END]', '</blockquote><p class="msg_p">').
-		replaceAll('[SPOILER]', '</p><details><summary onclick="ToggleDetails(this)">click to show spoiler</summary><hr class="chat_hr">').
-		replaceAll('[SPOILER=', '</p><details><summary onclick="ToggleDetails(this)">').replaceAll('_SPOILER]', '</summary><hr class="chat_hr">').
-		replaceAll('[SPOILER END]', '</details><p class="msg_p">').
-		replaceAll('[CENTER]', '</p><center>').replaceAll('[CENTER END]', '</center><p class="msg_p">').
-		replaceAll("[IMG_BOX]", '</p><div class="img_box"><p class="msg_p">').replaceAll('[IMG_BOX END]', '</p></div><p class="msg_p">').
-		replaceAll("[IMG]", '</p><img class="chat_img" src="').replaceAll('[IMG END]', '" onclick="ShowImage(this)"><p class="msg_p">').
-		replaceAll('[CODE]', '</p><pre class="code_box"><code>').replaceAll('[CODE END]', '</code></pre><p class="msg_p">').
-		replaceAll('[CODE=', '</p><pre class="code_box"><code class="language-').replaceAll('_CODE]', '">').
-		replaceAll('[URL=', '<a href="').replaceAll('_URL]', '" target="_blank">').replaceAll('[URL END]', '</a>').
-		replaceAll('[VIDEO=', '</p><video class="chat_vid" controls><source type="video/').replaceAll('_VIDEO]', '" src="').
-		replaceAll('[AUDIO=', '</p><audio class="chat_aud" controls><source type="audio/').replaceAll('_AUDIO]', '" src="').
-		replaceAll('[VIDEO END]', '"></video><p class="msg_p">').replaceAll('[AUDIO END]', '"></audio><p class="msg_p">').
-		replaceAll('[YOUTUBE]', '</p><iframe class="yt_vid" src="https://www.youtube.com/embed/').replaceAll('[YOUTUBE END]', '"></iframe><p class="msg_p">');
-}
-
-function ConvertAIBB(txt) {
-	let result = txt.replaceAll('[AIUI_THOUGHTS]', '</p><details><summary onclick="ToggleDetails(this)">click to show AI thoughts</summary><hr class="chat_hr">').
-		replaceAll('[AIUI_THOUGHTS END]', '</details><p class="msg_p">');
-	if (enable_bbcode == 1) {
-		result = ConvertBB(result).replaceAll("[AI_IMG NUM_", '</p><img class="chat_img" src="file://'+script_dir+'/ai_images/image_').
-		replaceAll("_CHAT_IMG]", '.png" title="').replaceAll("[AI_IMG END]", '" onclick="ShowInFolder(this)"><p class="msg_p">');
+	while ((pos = str.indexOf(sub_str, pos)) !== -1) {
+		count++;
+		pos += sub_str.length;
 	}
-	return result;
-}
 
-function EncodeBB(bbcode) {
-	let result = bbcode.replaceAll("[hr]", "[HR]");
-	
-	for (let i=0; i < bb_code_tags.length; ++i)
-	{
-		const bbc_tag = bb_code_tags[i];
-		const bbc_open_tag = "[" + bbc_tag + "]";
-		const bbc_close_tag = "[/" + bbc_tag + "]";
-		const bbc_upper_tag = bbc_tag.toUpperCase();
-		
-		while (result.includes(bbc_open_tag) && result.includes(bbc_close_tag)) {
-			const tag_start = result.indexOf(bbc_open_tag) + bbc_open_tag.length;
-			const tag_end = result.indexOf(bbc_close_tag);
-			if (tag_start >= tag_end) break;
-			const inner_txt = result.substring(tag_start, tag_end);
-			let inner_enc = inner_txt.replaceAll("\t", "[AI_UI_TAB]").replaceAll("\n", "[AI_UI_BR]");
-			if (bbc_upper_tag == "OL" || bbc_upper_tag == "UL") inner_enc = inner_enc.replaceAll("[*]", "[LI]");
-			if (bbc_upper_tag == "URL") {
-				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"="+inner_txt+"_"+bbc_upper_tag+"]"+inner_enc+"["+bbc_upper_tag+" END]");
-			} else if (bbc_upper_tag == "VIDEO") {
-				const vid_link = inner_txt.toLowerCase().trim();
-				let tag_data = "mp4";
-				if (vid_link.endsWith("webm")) {
-					tag_data = "webm";
-				} else if (vid_link.endsWith("ogg")) {
-					tag_data = "ogg";
-				}
-				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"="+tag_data+"_"+bbc_upper_tag+"]"+inner_enc+"["+bbc_upper_tag+" END]");
-			} else if (bbc_upper_tag == "AUDIO") {
-				const aud_link = inner_txt.toLowerCase().trim();
-				let tag_data = "mp3";
-				if (aud_link.endsWith("wav")) {
-					tag_data = "wav";
-				} else if (aud_link.endsWith("ogg")) {
-					tag_data = "ogg";
-				}
-				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"="+tag_data+"_"+bbc_upper_tag+"]"+inner_enc+"["+bbc_upper_tag+" END]");
-			} else {
-				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"]"+inner_enc+"["+bbc_upper_tag+" END]");
-			}
-		}
-	}
-	
-	for (let i=0; i < bb_data_tags.length; ++i)
-	{
-		const bbc_tag = bb_data_tags[i];
-		const bbc_data_tag = "[" + bbc_tag + "=";
-		const bbc_close_tag = "[/" + bbc_tag + "]";
-		const bbc_upper_tag = bbc_tag.toUpperCase();
-		
-		while (result.includes(bbc_data_tag) && result.includes(bbc_close_tag)) {
-			const data_start = result.indexOf(bbc_data_tag) + bbc_data_tag.length;
-			const tag_start = data_start + result.substring(data_start).indexOf(']');
-			const tag_data = result.substring(data_start, tag_start);
-			const tag_end = result.indexOf(bbc_close_tag);
-			if (tag_start+1 >= tag_end) break;
-			const inner_txt = result.substring(tag_start+1, tag_end);
-			if (bbc_upper_tag == "QUOTE") {
-				result = result.replace(bbc_data_tag+tag_data+"]"+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"]"+inner_txt+"[AI_UI_BR]\t- "+tag_data+"["+bbc_upper_tag+" END]");
-			} else {
-				result = result.replace(bbc_data_tag+tag_data+"]"+inner_txt+bbc_close_tag, "["+bbc_upper_tag+"="+tag_data+"_"+bbc_upper_tag+"]"+inner_txt+"["+bbc_upper_tag+" END]");
-			}
-			break;
-		}
-	}
-	
-	return result;
+	return count;
 }
 
 function TrimLast(str, chr) {
@@ -418,6 +318,178 @@ function StripFileProto(filename) {
 	} else {
 		return filename.replace('file://', '');
 	}
+}
+
+function EncodeHTML(txt) {
+	return txt.replaceAll('&', '&amp;').
+		replaceAll('<', '&lt;').
+		replaceAll('>', '&gt;').
+		replaceAll('(', '&lpar;').
+		replaceAll(')', '&rpar;').
+		replaceAll('#', '&num;').
+		replaceAll('$', '&dollar;').
+		replaceAll(':', '&colon;').
+		replaceAll('"', '&quot;').
+		replaceAll('\'', '&apos;').
+		replaceAll('/', '&#47;').
+		replaceAll('\\', '&#92;').
+		replaceAll('\t', '&Tab;');
+}
+
+function ConvertAITags(txt) {
+	return txt.replaceAll('AIUI_THINK_START', '<details><summary onclick="ToggleDetails(this)">click to show AI thoughts</summary><hr>').
+		replaceAll('AIUI_THINK_END', '</details>').
+		replaceAll('AIUI_TC_START', '<details><summary onclick="ToggleDetails(this)">click to show tool call information</summary><hr>').
+		replaceAll('AIUI_TC_END', '</details>').
+		replaceAll('AIUI_TR_START', '<details><summary onclick="ToggleDetails(this)">click to show tool response</summary><hr>').
+		replaceAll('AIUI_TR_END', '</details>').
+		replaceAll("AIUI_IMG_SRC=", '<div class="img_box"><img src="file://').
+		replaceAll("AIUI_IMG_TXT=", '" onclick="ShowInFolder(this)">Image prompt: ').replaceAll("AIUI_IMG_END", '</div>');
+}
+
+function ConvertBB(txt) {
+	return ('<p>' + txt.replaceAll('[HR]', '</p><hr><p>').
+		replaceAll('[BBC_START_B]', '<b>').replaceAll('[BBC_END_B]', '</b>').
+		replaceAll('[BBC_START_I]', '<i>').replaceAll('[BBC_END_I]', '</i>').
+		replaceAll('[BBC_START_U]', '<u>').replaceAll('[BBC_END_U]', '</u>').
+		replaceAll('[BBC_START_S]', '<s>').replaceAll('[BBC_END_S]', '</s>').
+		replaceAll('[BBC_START_H1]', '</p><h1>').replaceAll('[BBC_END_H1]', '</h1><p>').
+		replaceAll('[BBC_START_H2]', '</p><h2>').replaceAll('[BBC_END_H2]', '</h2><p>').
+		replaceAll('[BBC_START_H3]', '</p><h3>').replaceAll('[BBC_END_H3]', '</h3><p>').
+		replaceAll('[BBC_START_H4]', '</p><h4>').replaceAll('[BBC_END_H4]', '</h4><p>').
+		replaceAll('[BBC_START_H5]', '</p><h5>').replaceAll('[BBC_END_H5]', '</h5><p>').
+		replaceAll('[BBC_START_H6]', '</p><h6>').replaceAll('[BBC_END_H6]', '</h6><p>').
+		replaceAll('[BBC_START_OL]', '</p><ol>').replaceAll('[BBC_END_OL]', '</ol><p>').
+		replaceAll('[BBC_START_UL]', '</p><ul>').replaceAll('[BBC_END_UL]', '</ul><p>').
+		replaceAll('[BBC_START_LI]', '<li><p>').replaceAll('[BBC_END_LI]', '</p></li>').
+		replaceAll('[BBC_START_PRE]', '</p><pre>').replaceAll('[BBC_END_PRE]', '</pre><p>').
+		replaceAll('[BBC_START_QUOTE]', '</p><blockquote><p>').replaceAll('[BBC_END_QUOTE]', '</p></blockquote><p>').
+		replaceAll('[BBC_START_SPOILER]', '</p><details><summary onclick="ToggleDetails(this)">click to show spoiler</summary><hr><p>').
+		replaceAll('[BBC_START_SPOILER=', '</p><details><summary onclick="ToggleDetails(this)">').replaceAll('BBC_EOT_SPOILER]', '</summary><hr><p>').
+		replaceAll('[BBC_END_SPOILER]', '</p></details><p>').
+		replaceAll('[BBC_START_CENTER]', '</p><center><p>').replaceAll('[BBC_END_CENTER]', '</p></center><p>').
+		replaceAll('[BBC_START_IMG]', '</p><img src="').replaceAll('[BBC_END_IMG]', '" onclick="ShowImage(this)"><p>').
+		replaceAll('[BBC_START_CODE]', '</p><pre class="code_box"><code>').replaceAll('[BBC_END_CODE]', '</code></pre><p>').
+		replaceAll('[BBC_START_CODE=', '</p><pre class="code_box"><code class="language-').replaceAll('BBC_EOT_CODE]', '">').
+		replaceAll('[BBC_START_URL=', '<a href="').replaceAll('BBC_EOT_URL]', '" target="_blank">').replaceAll('[BBC_END_URL]', '</a>').
+		replaceAll('[BBC_START_VIDEO=', '</p><video class="chat_vid" controls><source type="video/').replaceAll('BBC_EOT_VIDEO]', '" src="').
+		replaceAll('[BBC_START_AUDIO=', '</p><audio class="chat_aud" controls><source type="audio/').replaceAll('BBC_EOT_AUDIO]', '" src="').
+		replaceAll('[BBC_END_VIDEO]', '"></video><p>').replaceAll('[BBC_END_AUDIO]', '"></audio><p>').
+		replaceAll('[BBC_START_YOUTUBE]', '</p><iframe class="yt_vid" src="https://www.youtube.com/embed/').replaceAll('[BBC_END_YOUTUBE]', '"></iframe><p>').
+		replaceAll('[BBC_LEFT_BRACKET_', '[').replaceAll('_BBC_RIGHT_BRACKET]', ']') + '</p>').
+		replaceAll("\n\n", "</p><p>").replaceAll("\n", "<br>").replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_BR]", "\n");
+}
+
+function EncodeBB(bbcode) {
+	let result = bbcode.replaceAll("[hr]", "[HR]").replaceAll("[CODE]", "[CODE=auto]").replaceAll("[code]", "[code=auto]");
+	
+	for (let i=0; i < bb_data_tags.length; ++i)
+	{
+		const bbc_tag = bb_data_tags[i];
+		const bbc_open_tag = "[" + bbc_tag + "]";
+		const bbc_data_tag = "[" + bbc_tag + "=";
+		const bbc_close_tag = "[/" + bbc_tag + "]";
+		const bbc_upper_tag = bbc_tag.toUpperCase();
+		const bbc_encoded_tag = "[BBC_START_"+bbc_upper_tag;
+		const bbc_encoded_end = "[BBC_END_"+bbc_upper_tag+"]";
+		const bbc_encoded_eot = "BBC_EOT_"+bbc_upper_tag+"]";
+		let data_start = 0;
+		
+		while (result.includes(bbc_data_tag) && result.includes(bbc_close_tag)) {
+			data_start = result.indexOf(bbc_data_tag, data_start) + bbc_data_tag.length;
+			const tag_start = data_start + result.substring(data_start).indexOf(']');
+			const tag_data = result.substring(data_start, tag_start);
+			let tag_end = result.indexOf(bbc_close_tag, tag_start);
+			if (tag_start+1 >= tag_end) break;
+			let inner_txt = result.substring(tag_start+1, tag_end);
+			let tags_skipped = 0;
+			while (tags_skipped < CountOccurences(inner_txt, bbc_open_tag) + CountOccurences(inner_txt, bbc_data_tag)) {
+				let last_end = tag_end;
+				tag_end = result.indexOf(bbc_close_tag, tag_end + bbc_close_tag.length);
+				if (tag_start >= tag_end) {
+					inner_txt = result.substring(tag_start+1, last_end);
+					break;
+				} else {
+					tags_skipped++;
+					inner_txt = result.substring(tag_start+1, tag_end);
+				}
+			}
+			let inner_enc = inner_txt;
+			if (bbc_upper_tag == "CODE") {
+				inner_enc = TrimStart(inner_enc, "\n").replaceAll('[CODE=auto]', '[CODE]').replaceAll('[code=auto]', '[code]').
+							replaceAll('[', '[BBC_LEFT_BRACKET_').replaceAll(']', '_BBC_RIGHT_BRACKET]');
+			}
+			inner_enc = inner_enc.replaceAll("\t", "[AI_UI_TAB]").replaceAll("\n", "[AI_UI_BR]");
+			if (bbc_upper_tag == "QUOTE") {
+				result = result.replace(bbc_data_tag+tag_data+"]"+inner_txt+bbc_close_tag, bbc_encoded_tag+"]"+inner_enc+"\n\n - "+tag_data+bbc_encoded_end);
+			} else if (bbc_upper_tag == "CODE" && tag_data == "auto") {
+				result = result.replace(bbc_data_tag+tag_data+"]"+inner_txt+bbc_close_tag, bbc_encoded_tag+"]"+inner_enc+bbc_encoded_end);
+			} else {
+				result = result.replace(bbc_data_tag+tag_data+"]"+inner_txt+bbc_close_tag, bbc_encoded_tag+"="+tag_data+bbc_encoded_eot+inner_enc+bbc_encoded_end);
+			}
+		}
+	}
+	
+	for (let i=0; i < bb_code_tags.length; ++i)
+	{
+		const bbc_tag = bb_code_tags[i];
+		const bbc_open_tag = "[" + bbc_tag + "]";
+		const bbc_data_tag = "[" + bbc_tag + "=";
+		const bbc_close_tag = "[/" + bbc_tag + "]";
+		const bbc_upper_tag = bbc_tag.toUpperCase();
+		const bbc_encoded_tag = "[BBC_START_"+bbc_upper_tag;
+		const bbc_encoded_end = "[BBC_END_"+bbc_upper_tag+"]";
+		const bbc_encoded_eot = "BBC_EOT_"+bbc_upper_tag+"]";
+		let tag_start = 0;
+		
+		while (result.includes(bbc_open_tag) && result.includes(bbc_close_tag)) {
+			tag_start = result.indexOf(bbc_open_tag, tag_start) + bbc_open_tag.length;
+			let tag_end = result.indexOf(bbc_close_tag, tag_start);
+			if (tag_start >= tag_end) break;
+			let inner_txt = result.substring(tag_start, tag_end);
+			let tags_skipped = 0;
+			while (tags_skipped < CountOccurences(inner_txt, bbc_open_tag) + CountOccurences(inner_txt, bbc_data_tag)) {
+				let last_end = tag_end;
+				tag_end = result.indexOf(bbc_close_tag, tag_end + bbc_close_tag.length);
+				if (tag_start >= tag_end) {
+					inner_txt = result.substring(tag_start, last_end);
+					break;
+				} else {
+					tags_skipped++;
+					inner_txt = result.substring(tag_start, tag_end);
+				}
+			}
+			let inner_enc = inner_txt;
+			if (bbc_upper_tag == "PRE") inner_enc = TrimStart(inner_enc, "\n");
+			inner_enc = inner_enc.replaceAll("\t", "[AI_UI_TAB]").replaceAll("\n", "[AI_UI_BR]");
+			if (bbc_upper_tag == "OL" || bbc_upper_tag == "UL") inner_enc = inner_enc.replaceAll("[*]", "[BBC_START_LI]");
+			if (bbc_upper_tag == "URL") {
+				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, bbc_encoded_tag+"="+inner_txt+bbc_encoded_eot+inner_enc+bbc_encoded_end);
+			} else if (bbc_upper_tag == "VIDEO") {
+				const vid_link = inner_txt.toLowerCase().trim();
+				let tag_data = "mp4";
+				if (vid_link.endsWith("webm")) {
+					tag_data = "webm";
+				} else if (vid_link.endsWith("ogg")) {
+					tag_data = "ogg";
+				}
+				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, bbc_encoded_tag+"="+tag_data+bbc_encoded_eot+inner_enc+bbc_encoded_end);
+			} else if (bbc_upper_tag == "AUDIO") {
+				const aud_link = inner_txt.toLowerCase().trim();
+				let tag_data = "mp3";
+				if (aud_link.endsWith("wav")) {
+					tag_data = "wav";
+				} else if (aud_link.endsWith("ogg")) {
+					tag_data = "ogg";
+				}
+				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, bbc_encoded_tag+"="+tag_data+bbc_encoded_eot+inner_enc+bbc_encoded_end);
+			} else {
+				result = result.replace(bbc_open_tag+inner_txt+bbc_close_tag, bbc_encoded_tag+"]"+inner_enc+bbc_encoded_end);
+			}
+		}
+	}
+	
+	return result.replaceAll("[CODE=auto]", "[CODE]").replaceAll("[code=auto]", "[code]");
 }
 
 // ---- PAGES ----
@@ -514,6 +586,8 @@ function ThinkAnim() {
 function StartThinking() {
 	thinking = true;
 	let scroll_box = $('#chat_log');
+	if (scroll_box.children().last().hasClass('msg_box'))
+		scroll_box.append('<div class="msg_pad"></div>');
 	scroll_box.animate({scrollTop: scroll_box.prop("scrollHeight")}, 300, 'linear', function() {
 		$('#thinking').html('');
 		$('#thinking').show();
@@ -525,28 +599,40 @@ function StartThinking() {
 function StopThinking() {
 	thinking = false;
 	let scroll_box = $('#chat_log');
-	scroll_box.animate({scrollTop: scroll_box.prop("scrollHeight")});
+	scroll_box.animate({scrollTop: scroll_box.prop("scrollHeight")}, 300, 'linear');
 	$('#thinking').hide();
 	clearInterval(loop_timer);
 }
 
 function DisExtraButtons(bool_val) {
-	$('#redo_btn').prop('disabled', bool_val);
-	$('#cont_btn').prop('disabled', bool_val);
-	$('#clear_btn').prop('disabled', bool_val);
+	let new_state = bool_val ? true : !$('#chat_log').children().last().hasClass('msg_box');
+	$('#redo_btn').prop('disabled', new_state);
+	$('#cont_btn').prop('disabled', new_state);
+	$('#clear_btn').prop('disabled', new_state);
 }
 
-function DisableButtons(bool_val, load_state=false) {
-	let new_state = bool_val;
-	if (load_state) {
-		new_state = bool_val ? true : btn_state;
+function DisableButtons(bool_val, dis_send_btn=true) {
+	if (!bool_val) {
+		$('#send_btn').html('SEND');
+		$('#gen_btn').html('GENERATE');
+		$('#send_btn').prop('disabled', false);
+		$('#gen_btn').prop('disabled', false);
 	} else {
-		btn_state = bool_val;
+		let btn_id = '#send_btn';
+		if ($('#chat_app').is(":hidden")) {
+			$(btn_id).prop('disabled', true);
+			btn_id = '#gen_btn';
+		} else {
+			$('#gen_btn').prop('disabled', true);
+		}
+		if (dis_send_btn) {
+			$(btn_id).prop('disabled', true);
+		} else {
+			$(btn_id).html('STOP');
+		}
 	}
-	DisExtraButtons(new_state);
-	$('#send_btn').prop('disabled', bool_val);
+	DisExtraButtons(bool_val);
 	$('#apply_btn').prop('disabled', bool_val);
-	$('#gen_btn').prop('disabled', bool_val);
 	$('#tts_btn').prop('disabled', bool_val);
 	$('#read_txt_btn').prop('disabled', bool_val);
 	$('#clone_voice_btn').prop('disabled', bool_val);
@@ -561,16 +647,63 @@ function DisableButtons(bool_val, load_state=false) {
 	$('.config_btn').prop('disabled', bool_val);
 }
 
-ipcRenderer.on('bot-msg', (event, payload) => {
-	let bot_msg = payload.msg.trim();
-	if (enable_bbcode == 0) {
-		bot_msg = ConvertAIBB(EncodeHTML(EncodeAIXML(bot_msg)));
+ipcRenderer.on('txtgen-stream-start', (event, payload) => {
+	streaming_tgrb = $('#gen_result');
+	streaming_tgrb.html('');
+});
+
+ipcRenderer.on('txtgen-stream-text', (event, payload) => {
+	const txt = EncodeHTML(payload.txt).replaceAll("[AI_UI_BR]", "<br>");
+	if (streaming_tgrb.html() == '') {
+		if (payload.txt.trim() != '')
+			streaming_tgrb.html(txt+' ');
 	} else {
-		bot_msg = ConvertAIBB(EncodeHTML(EncodeAIXML(EncodeBB(bot_msg))));
+		streaming_tgrb.html(streaming_tgrb.html()+txt+' ');
 	}
-	const msg_html = '<div class="bmsg_box"><div class="bot_msg"><p class="msg_p">'+bot_msg+'</p></div></div>';
-	$('#chat_log').append(msg_html.replaceAll('<p class="msg_p"></p>', '').replaceAll('<p class="msg_p"><br>', '<p class="msg_p">'));
-	$("#chat_log div.bmsg_box").last().find("pre.code_box code").each(function () { hljs.highlightElement(this) });
+});
+
+ipcRenderer.on('stream-start', (event, payload) => {
+	const msg_html = '<div class="msg_box hidden"><div class="bot_msg"><p></p></div></div><div class="msg_pad"></div>';
+	$('.msg_pad').remove();
+	$('#chat_log').append(msg_html);
+	streaming_bmbl = $("#chat_log div.msg_box").last();
+	streaming_bmpf = streaming_bmbl.find("div.bot_msg p").first();
+});
+
+ipcRenderer.on('stream-text', (event, payload) => {
+	const txt = EncodeHTML(payload.txt).replaceAll("[AI_UI_BR]", "<br>");
+	streaming_bmpf.html(streaming_bmpf.html()+txt+' ');
+	if (streaming_bmpf.html().trim() != '') {
+		if (streaming_bmbl.is(":hidden")) streaming_bmbl.show();
+		let scroll_box = $('#chat_log');
+		scroll_box.animate({scrollTop: scroll_box.prop("scrollHeight")}, 300, 'linear');
+	}
+});
+
+ipcRenderer.on('bot-msg', (event, payload) => {
+	let last_bmb = streaming_bmbl;
+	let bot_msg = payload.msg.replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_BR]", "\n").trim();
+	if (bot_msg != '') {
+		if (format_mode == 1) {
+			bot_msg = ConvertBB(ConvertAITags(EncodeHTML(EncodeBB(bot_msg))));
+		} else if (format_mode == 2) {
+			bot_msg = ConvertAITags(md.render(bot_msg));
+		} else {
+			bot_msg = '<p>'+ConvertAITags(EncodeHTML(bot_msg).replaceAll("\n", "<br>"))+'</p>';
+		}
+		bot_msg = bot_msg.replaceAll("AI_UI_AMP", "&");
+		if (last_bmb !== null)  {
+			last_bmb.html('<div class="bot_msg">'+bot_msg+'</div>');
+		} else {
+			$('#chat_log').append('<div class="msg_box"><div class="bot_msg">'+bot_msg+'</div></div>');
+			last_bmb = $("#chat_log div.msg_box").last();
+		}
+		last_bmb.find('div.bot_msg p').each(function () { if ($(this).html().trim() == '') this.remove(); });
+		last_bmb.find("pre.code_box code").each(function () {
+			if ($(this).attr("data-highlighted") != "yes") hljs.highlightElement(this);
+		});
+	}
+	streaming_bmbl = null;
 	$('.msg_pad').remove();
 	DisableButtons(false);
 	StopThinking();
@@ -581,6 +714,11 @@ ipcRenderer.on('bot-msg', (event, payload) => {
 });
 
 function SendMsg() {
+	if ($('#send_btn').html() == 'STOP') {
+		$('#send_btn').prop('disabled', true);
+		ipcRenderer.invoke('stop-stream');
+		return;
+	}
 	if (thinking || generating) return;
 	if ($('#send_btn').prop('disabled')) return;
 	let messages = [];
@@ -600,25 +738,17 @@ function SendMsg() {
 	for (let i=0; i<messages.length; ++i) {
 		let msg = messages[i].trim();
 		if (msg == '') continue;
-		if (chat_exp) {
-			if (enable_bbcode == 0) {
-				html_msg += '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+
-							EncodeHTML(msg).replaceAll("\n", "<br>")+'</p>';
-			} else {
-				html_msg += '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+
-							ConvertBB(EncodeHTML(EncodeBB(msg)).replaceAll("\n", "<br>"))+'</p>';
-			}
+		html_msg += '<div class="msg_box"><div class="chat_msg">';
+		if (format_mode == 1) {
+			html_msg += ConvertBB(EncodeHTML(EncodeBB(msg)));
+		} else if (format_mode == 2) {
+			html_msg += md.render(msg);
 		} else {
-			if (enable_bbcode == 0) {
-				html_msg += '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+
-							EncodeHTML(msg)+'</p>';
-			} else {
-				html_msg += '<div class="umsg_box"><div class="chat_msg"><p class="msg_p">'+
-							ConvertBB(EncodeHTML(EncodeBB(msg)))+'</p>';
-			}
+			html_msg += '<p>'+EncodeHTML(msg).replaceAll("\n", "<br>")+'</p>';
 		}
+		if (chat_exp && format_mode < 2) msg = msg;
+		if (i+1 < messages.length) html_msg += "</div></div>";
 	}
-	html_msg = html_msg.replaceAll('<p class="msg_p"></p>', '').replaceAll('<p class="msg_p"><br>', '<p class="msg_p">');
 	if (html_msg == '') return;
 	if (!$('#attach_dialog').is(":hidden")) {
 		ToggleAttachBox();
@@ -632,32 +762,45 @@ function SendMsg() {
 		ClearAttachments();
 	}
 	$('#chat_log').append(html_msg+'</div></div>');
-	$("#chat_log div.umsg_box").each(function () {
-		$(this).find("pre.code_box code").each(function () {
+	if (messages.length > 1) {
+		let msg_boxes = $("#chat_log div.msg_box").slice(-messages.length);
+		if (format_mode == 1) {
+			msg_boxes.each(function () {
+				$(this).find("div.chat_msg p").each(function () {
+					if ($(this).html().trim() == '') this.remove();
+				});
+			});
+		}
+		msg_boxes.each(function () {
+			$(this).find("pre.code_box code").each(function () {
+				if ($(this).attr("data-highlighted") != "yes") hljs.highlightElement(this);
+			});
+		});
+	} else {
+		let last_cmb = $("#chat_log div.msg_box").last();
+		last_cmb.find("div.chat_msg p").each(function () { if ($(this).html().trim() == '') this.remove(); });
+		last_cmb.find("pre.code_box code").each(function () {
 			if ($(this).attr("data-highlighted") != "yes") hljs.highlightElement(this);
 		});
-	});
+	}
 	$('#edit_dialog').hide();
 	setTimeout(function () {
-		DisableButtons(true);
+		DisableButtons(true, gen_mode != 1);
 		StartThinking();
 		ipcRenderer.send('send-msg', { msg: message });
 	}, send_delay);
 }
 
 function RedoLast() {
-	$('.bmsg_box').last().remove();
-	if ($('#chat_log').children().last().hasClass('bmsg_box'))
-		$('#chat_log').append('<div class="msg_pad"></div>');
-	DisableButtons(true);
+	$('.msg_box').last().remove();
+	DisableButtons(true, gen_mode != 1);
 	ipcRenderer.send('send-msg', { msg: 'redo_last' });
 	StartThinking();
 }
 
 function ContChat() {
-	DisableButtons(true);
+	DisableButtons(true, gen_mode != 1);
 	ipcRenderer.send('send-msg', { msg: 'cont_chat' });
-	$('#chat_log').append('<div class="msg_pad"></div>');
 	StartThinking();
 }
 
@@ -863,6 +1006,11 @@ function ReadGenTxt() {
 }
 
 function GenText() {
+	if ($('#gen_btn').html() == 'STOP') {
+		$('#gen_btn').prop('disabled', true);
+		ipcRenderer.invoke('stop-stream');
+		return;
+	}
 	if (thinking || generating) return;
 	if ($('#gen_btn').prop('disabled')) return;
 	let start_txt = '';
@@ -872,17 +1020,21 @@ function GenText() {
 		start_txt = $('#gen_text_inp').val();
 	}
 	if (start_txt == '') return;
-	DisableButtons(true, true);
+	DisableButtons(true, gen_mode != 1);
 	$('#gen_result').html('Generating text ...');
 	const max_genl = $('#gen_max_len').val();
 	const min_genl = $('#gen_min_len').val();
+	const gen_numb = $('#gen_num_beams').val();
+	const gen_numg = $('#gen_beam_groups').val();
 	const gen_temp = $('#gen_temp').val();
 	const gen_topk = $('#gen_top_k').val();
 	const gen_topp = $('#gen_top_p').val();
 	const gen_typp = $('#gen_typ_p').val();
 	const gen_repp = $('#gen_rep_p').val();
+	const gen_dosp = $('#gds_select').find(':selected').val();
 	ipcRenderer.send('gen-text', {
-		txt: start_txt, max: max_genl, min: min_genl, temp: gen_temp,
+		txt: start_txt, max: max_genl, min: min_genl,
+		do_sp: gen_dosp, num_b: gen_numb, num_g: gen_numg, temp: gen_temp,
 		top_k: gen_topk, top_p: gen_topp, typ_p: gen_typp, rep_p: gen_repp
 	});
 	StartGenerating('#txtgen_box .generating');
@@ -890,7 +1042,7 @@ function GenText() {
 
 ipcRenderer.on('gen-result', (event, payload) => {
 	const txt_html = EncodeHTML(payload.txt).replaceAll("[AI_UI_BR]", "<br>");
-	DisableButtons(false, true);
+	DisableButtons(false);
 	$('#gen_result').html(txt_html);
 	$('#read_txt_btn').html('TEXT TO SPEECH');
 	StopGenerating('#txtgen_box .generating');
@@ -928,7 +1080,7 @@ function CloneVoice() {
 		ipcRenderer.send('show-alert', { msg: "A valid voice sample and voice name is required!" });
 		return;
 	}
-	DisableButtons(true, true);
+	DisableButtons(true);
 	$('#tts_result').html('Cloning voice ...');
 	ipcRenderer.send('clone-voice', { model:cmodel, sample:vsample, name:vname, transcript:tstext });
 	StartGenerating('#ttsgen_box .generating');
@@ -946,7 +1098,7 @@ ipcRenderer.on('clone-result', (event, payload) => {
 	} else {
 		$('#tts_result').html('The voice could not be cloned. '+payload.voice.replace('ERROR:', ''));
 	}
-	DisableButtons(false, true);
+	DisableButtons(false);
 	StopGenerating('#ttsgen_box .generating');
 });
 
@@ -960,7 +1112,7 @@ function GenSpeech() {
 		speak_txt = $('#tts_text_inp').val();
 	}
 	if (speak_txt == '') return;
-	DisableButtons(true, true);
+	DisableButtons(true);
 	$('#tts_result').html('Generating audio ...');
 	last_gen_mode = $('#ttsgen_mode').find(':selected').val();
 	last_gen_voice = $('#tts_voices').find(':selected').val();
@@ -987,7 +1139,7 @@ ipcRenderer.on('tts-result', (event, payload) => {
 		}
 		$('#tts_result').html(wav_html);
 	}
-	DisableButtons(false, true);
+	DisableButtons(false);
 	StopGenerating('#ttsgen_box .generating');
 });
 
@@ -1038,7 +1190,7 @@ function GenImage() {
 	let prompt_neg = $('#img_text_neg').val();
 	if (prompt_txt == '') return;
 	if (prompt_neg == '') prompt_neg = 'NONE';
-	DisableButtons(true, true);
+	DisableButtons(true);
 	$('#img_result').html('Generating image ...');
 	const infer_steps = $('#infer_steps').val();
 	const guide_scale = $('#guidance').val();
@@ -1047,35 +1199,35 @@ function GenImage() {
 	const lora_file = $('#lora_file').val();
 	const lora_dir = $('#lora_dir').val();
 	const lora_scale = $('#lora_scale').val();
+	let img_seed = $('#img_seed').val().trim();
 	let img_width = 'auto';
 	let img_height = 'auto';
 	if ($('#is_select').find(':selected').val() == 'custom') {
 		img_width = $('#img_width').val();
 		img_height = $('#img_height').val();
 	}
+	if (img_seed == '') {
+		img_seed = 'NONE';
+	} else if (Number.isInteger(parseInt(img_seed, 10))) {
+		img_seed = parseInt(img_seed, 10).toString();
+	} else {
+		img_seed = parseInt(img_seed.toLowerCase().replace(/[^a-z0-9]/g, ''), 36);
+		img_seed = Number.isInteger(img_seed) ? img_seed.toString() : '0';
+	}
 	ipcRenderer.send('gen-image', {
-		img_prompt: prompt_txt, neg_prompt: prompt_neg, steps: infer_steps, 
-		guidance: guide_scale, width: img_width, height: img_height, check: safety_check,
+		img_prompt: prompt_txt, neg_prompt: prompt_neg, steps: infer_steps, guidance: guide_scale,
+		seed: img_seed, width: img_width, height: img_height, check: safety_check,
 		vae_file: vae_file, lora_file: lora_file, lora_dir: lora_dir, lora_scale: lora_scale
 	});
 	StartGenerating('#imggen_box .generating');
 }
 
 ipcRenderer.on('img-result', (event, payload) => {
-	const img_html = "<img id='gen_img' src='file://"+script_dir+"/ai_images/image_"+payload.img+".png'>";
-	DisableButtons(false, true);
-	if (payload.img >= 0) {
-		$('#img_result').html(img_html);
-	} else if (payload.img == -1) {
-		$('#img_result').html("Invalid prompt text.");
-	} else if (payload.img == -2) {
-		$('#img_result').html("There was an error loading the image generation model.");
-	} else if (payload.img == -3) {
-		$('#img_result').html("There was an error generating the image with your settings.");
-	} else if (payload.img == -4) {
-		$('#img_result').html("There was an error saving the image. Run the app as an admin.");
+	DisableButtons(false);
+	if (payload.img.startsWith("ERROR:")) {
+		$('#img_result').html(payload.img);
 	} else {
-		$('#img_result').html("An unexpected error occurred. Try again.");
+		$('#img_result').html("<img id='gen_img' src='file://"+payload.img+"'>");
 	}
 	StopGenerating('#imggen_box .generating');
 });
@@ -1122,16 +1274,19 @@ ipcRenderer.on('init-ui', (event, payload) => {
 	if (payload.state !== false) {
 		const d = new Date();
 		const curr_date = (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
-		const def_ip = default_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
-		const pyg_ip = pygmalion_ip.replaceAll('HUMAN_NAME', human_name).replaceAll('BOT_NAME', bot_name).replaceAll('DATE', curr_date);
-		const tools_ip = tooluse_ip.replaceAll("{tool_funcs}", tool_funcs);
-		const tools2_ip = tooluse2_ip.replaceAll("{tool_funcs}", tool_funcs);
+		const format_help = format_mode == 1 ? bbcode_help : (format_mode == 2 ? latex_help : '');
+		const format_mode_val = $("#format_mode option[value='"+format_mode+"']").html();
+		const def_ip = default_ip.replaceAll('HUMAN_NAME', () => human_name).replaceAll('BOT_NAME', () => bot_name).replaceAll('DATE', () => curr_date);
+		const think_ip = thinking2_ip.replaceAll('DATE', () => curr_date).replaceAll('FORMAT_MODE', () => format_mode_val).replaceAll('FORMAT_HELP', () => format_help);
+		const search_ip = researcher_ip.replaceAll('DATE', () => curr_date).replaceAll('FORMAT_MODE', () => format_mode_val).replaceAll('FORMAT_HELP', () => format_help);
+		const tools_ip = tooluse_ip.replaceAll("{tool_funcs}", () => tool_funcs);
+		const tools2_ip = tooluse2_ip.replaceAll("{tool_funcs}", () => tool_funcs);
 		if (payload.state == 'AI_UI_DEFAULT') {
 			prompt = def_ip;
 		} else {
 			prompt = payload.state.replaceAll("[AI_UI_BR]", "\n");
 		}
-		ip_vals = { chat:def_ip, pygmalion:pyg_ip, think:thinking_ip, think2:thinking2_ip, tools:tools_ip, tools2:tools2_ip, bbcode:bbcode_ip };
+		ip_vals = { chat:def_ip, think:thinking_ip, think2:think_ip, research:search_ip, tools:tools_ip, tools2:tools2_ip, bbcode:bbcode_ip };
 		RefreshPrompt(prompt);
 		$('#gen_result').html('');
 		$('#img_result').html('');
@@ -1149,7 +1304,7 @@ ipcRenderer.on('ai-ready', (event, payload) => {
 		asr_pending = false;
 		SendMsg();
 	}
-	DisableButtons(false, true);
+	DisableButtons(false);
 	StopThinking();
 	StopGenerating();
 });
@@ -1268,8 +1423,8 @@ ipcRenderer.on('got-avatar', (event, payload) => {
 
 ipcRenderer.on('got-tools', (event, payload) => {
 	tool_funcs = payload.tools;
-	ip_vals.tools = tooluse_ip.replaceAll("{tool_funcs}", tool_funcs);
-	ip_vals.tools2 = tooluse2_ip.replaceAll("{tool_funcs}", tool_funcs);
+	ip_vals.tools = tooluse_ip.replaceAll("{tool_funcs}", () => tool_funcs);
+	ip_vals.tools2 = tooluse2_ip.replaceAll("{tool_funcs}", () => tool_funcs);
 });
 
 ipcRenderer.on('got-file', (event, payload) => {
@@ -1345,16 +1500,21 @@ ipcRenderer.on('load-config', (event, payload) => {
 	comp_dev = app_config.comp_dev;
 	start_meth = app_config.start_meth;
 	
-	enable_bbcode = app_config.enable_bbcode;
+	gen_mode = app_config.gen_mode;
+	format_mode = app_config.format_mode;
 	enable_tooluse = app_config.enable_tooluse;
 	enable_devmode = app_config.enable_devmode;
 	enable_asasro = app_config.enable_asasro;
 	start_rec_keys = app_config.start_rec_keys;
 	stop_rec_keys = app_config.stop_rec_keys;
+	hf_token = app_config.hf_token;
 
 	max_mm = ai_config.msg_mem;
 	max_rl = ai_config.max_res;
 	min_rl = ai_config.min_res;
+	do_sample = ai_config.do_sample;
+	num_beams = ai_config.num_beams;
+	beam_groups = ai_config.beam_groups;
 	b_temp = ai_config.base_temp;
 	prompt_p = ai_config.prompt_p;
 	top_k = ai_config.top_k;
@@ -1401,16 +1561,21 @@ ipcRenderer.on('load-config', (event, payload) => {
 	$('#device_select').val(comp_dev);
 	$('#startup_select').val(start_meth);
 	
-	$('#bbcode_enable').val(enable_bbcode);
+	$('#txtgen_mode').val(gen_mode);
+	$('#format_mode').val(format_mode);
 	$('#tooluse_enable').val(enable_tooluse);
 	$('#devmode_enable').val(enable_devmode);
 	$('#asasro_enable').val(enable_asasro);
 	$('#start_rec_keys').val(start_rec_keys);
 	$('#stop_rec_keys').val(stop_rec_keys);
+	$('#hf_access_token').val(hf_token);
 
 	$('#max_msg_mem').val(max_mm);
 	$('#max_res_len').val(max_rl);
 	$('#min_res_len').val(min_rl);
+	$('#ds_select').val(do_sample);
+	$('#num_beams').val(num_beams);
+	$('#beam_groups').val(beam_groups);
 	$('#base_temp').val(b_temp);
 	$('#pp_select').val(prompt_p);
 	$('#top_k').val(top_k);
@@ -1428,6 +1593,9 @@ ipcRenderer.on('load-config', (event, payload) => {
 
 	$('#gen_max_len').val(gen_config.max_len);
 	$('#gen_min_len').val(gen_config.min_len);
+	$('#gds_select').val(gen_config.do_sample);
+	$('#gen_num_beams').val(gen_config.num_beams);
+	$('#gen_beam_groups').val(gen_config.beam_groups);
 	$('#gen_temp').val(gen_config.temp);
 	$('#gen_top_k').val(gen_config.top_k);
 	$('#gen_top_p').val(gen_config.top_p);
@@ -1467,29 +1635,46 @@ function ApplySettings() {
 	let stype = $('#smodel_select').find(':selected').val();
 	let cdev = $('#device_select').find(':selected').val();
 	let smeth = $('#startup_select').find(':selected').val();
-	let ebbcode = $('#bbcode_enable').find(':selected').val();
+	let formatm = $('#format_mode').find(':selected').val();
+	let genmd = $('#txtgen_mode').find(':selected').val();
 	let etooluse = $('#tooluse_enable').find(':selected').val();
 	let edevmode = $('#devmode_enable').find(':selected').val();
 	let easasro = $('#asasro_enable').find(':selected').val();
 	let startrk = $('#start_rec_keys').val().trim();
 	let stoprk = $('#stop_rec_keys').val().trim();
-	if (script_dir != sdir || python_bin != pbin || model_dir != mdir || im_model != imdir || tts_model != ttsdir || sr_model != srdir || 
-	model_args != margs || model_type != mtype || imodel_type != itype || smodel_type != stype || comp_dev != cdev || start_meth != smeth ||
-	enable_bbcode != ebbcode || enable_tooluse != etooluse) {
-		ipcRenderer.send('config-app', {
-			script_dir: sdir, python_bin: pbin, model_dir: mdir, sd_model: imdir, tts_model: ttsdir, sr_model: srdir, 
-			model_args: margs, model_type: mtype, imodel_type: itype, smodel_type: stype, comp_dev: cdev, start_meth: smeth,
-			enable_bbcode: ebbcode, enable_tooluse: etooluse
-		});
-	} else if (enable_devmode != edevmode || enable_asasro != easasro || start_rec_keys != startrk || stop_rec_keys != stoprk) {
-		ipcRenderer.send('config-other', {
-			enable_devmode: edevmode, enable_asasro: easasro, start_rec_keys: startrk, stop_rec_keys: stoprk
-		});
-		enable_devmode = edevmode;
-		enable_asasro = easasro;
-		start_rec_keys = startrk;
-		stop_rec_keys = stoprk;
-		ipcRenderer.send('show-menubar', edevmode);
+	let hftoken = $('#hf_access_token').val().trim();
+	if ($('#other_settings').is(":hidden")) {
+		if (script_dir != sdir || python_bin != pbin || model_dir != mdir || im_model != imdir || tts_model != ttsdir || sr_model != srdir || 
+		model_args != margs || model_type != mtype || imodel_type != itype || smodel_type != stype || comp_dev != cdev || start_meth != smeth) {
+			ipcRenderer.send('config-app', {
+				script_dir: sdir, python_bin: pbin, model_dir: mdir, sd_model: imdir, tts_model: ttsdir, sr_model: srdir, 
+				model_args: margs, model_type: mtype, imodel_type: itype, smodel_type: stype, comp_dev: cdev, start_meth: smeth
+			});
+		}
+	} else {
+		let new_settings = false;
+		if (gen_mode != genmd || format_mode != formatm || enable_tooluse != etooluse || hf_token != hftoken) {
+			ipcRenderer.send('config-app-other', {
+				gen_mode: genmd, format_mode: formatm, enable_tooluse: etooluse, hf_token: hftoken
+			});
+			new_settings = true;
+			gen_mode = genmd;
+			format_mode = formatm;
+			enable_tooluse = etooluse;
+			hf_token = hftoken;
+		}
+		if (enable_devmode != edevmode || enable_asasro != easasro || start_rec_keys != startrk || stop_rec_keys != stoprk) {
+			ipcRenderer.send('config-other', {
+				enable_devmode: edevmode, enable_asasro: easasro, start_rec_keys: startrk, stop_rec_keys: stoprk
+			});
+			new_settings = true;
+			enable_devmode = edevmode;
+			enable_asasro = easasro;
+			start_rec_keys = startrk;
+			stop_rec_keys = stoprk;
+			ipcRenderer.send('show-menubar', edevmode);
+		}
+		if (new_settings) ipcRenderer.send('show-alert', { msg: 'New settings applied.' });
 	}
 }
 
@@ -1498,17 +1683,22 @@ function ApplyConfig() {
 		const maxmm = $('#max_msg_mem').val();
 		const maxrl = $('#max_res_len').val();
 		const minrl = $('#min_res_len').val();
+		const numbm = $('#num_beams').val();
+		const numbg = $('#beam_groups').val();
 		const btemp = $('#base_temp').val();
 		const topk = $('#top_k').val();
 		const topp = $('#top_p').val();
 		const typp = $('#typical_p').val();
 		const repp = $('#rep_penalty').val();
+		const dosmp = $('#ds_select').find(':selected').val();
 		const promptp = $('#pp_select').find(':selected').val();
 		if (max_mm != maxmm || max_rl != maxrl || min_rl != minrl || b_temp != btemp || 
+		do_sample != dosmp || num_beams != numbm || beam_groups != numbg || 
 		topk != top_k || topp != top_p || typp != typical_p || repp != rep_penalty || prompt_p != promptp) {
 			ipcRenderer.send('config-ai', {
-				max_mmem: maxmm, max_rlen: maxrl, min_rlen: minrl, temp: btemp, 
-				tk: topk, tp: topp, typ: typp, rp: repp, pp: promptp
+				max_mmem: maxmm, max_rlen: maxrl, min_rlen: minrl,
+				do_sample: dosmp, num_beams: numbm, beam_groups: numbg,
+				temp: btemp, tk: topk, tp: topp, typ: typp, rp: repp, pp: promptp
 			});
 			ipcRenderer.send('show-alert', { msg: 'New settings applied.' });
 		}
@@ -1808,15 +1998,19 @@ function SelectTools(tool_mode) {
 		$('#tool_btns').show();
 		break;
 	case 'research':
-		$('#tools_info').html("<small>This provides some tools for searching online resources such as Wikipedia and arXiv. These tools can help the bot retrieve up-to-date information and conduct research.</small>");
+		$('#tools_info').html("<small>This provides some tools for searching online resources such as Wikipedia, arXiv, GitHub, etc. These tools can help the bot retrieve up-to-date information and conduct research. To enable more general web search tools you must edit search_funcs.py and input your Firecrawl API key.</small>");
 		break;
 	case 'math':
-		$('#tools_info').html("<small>This tool file has some basic math functions which can be used to help language models make more accurate calculations.</small>");
+		$('#tools_info').html("<small>This tool file has some tool functions which allow expressions to be evaluated using asteval. Can be used to help language models make more accurate calculations and solve math related problems.</small>");
+		break;
+	case 'merge':
+		$('#tools_info').html("<small>This tool file combines the tool functions in the research, math, and custom tool files. Does not include roleplay tool functions.</small>");
 		break;
 	}
 }
 
 function RestartScript() {
+	ClearAttachments();
 	ipcRenderer.invoke('restart-script');
 }
 
@@ -1831,7 +2025,28 @@ function QuitApp() {
 $(document).ready(function() {
 	SetAppVersion();
 	StartScript();
+	
+	md = markdownit({
+		html:         false,
+		xhtmlOut:     false,
+		linkify:      false,
+		typographer:  false,
+		breaks:       true,
+		
+		highlight: function (str, lang) {
+			if (lang && hljs.getLanguage(lang)) {
+				try {
+					return '<pre class="code_box"><code class="hljs">' +
+					hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
+					'</code></pre>';
+				} catch (__) {}
+			}
 
+			return '<pre class="code_box"><code class="hljs">' + md.utils.escapeHtml(str) + '</code></pre>';
+		}
+	}).use(mk, { throwOnError: false, errorColor: " #CC0000" }).
+	use(markdownitEmoji, { shortcuts: {}}).use(taskLists).use(footNotes);
+	
 	$("#input_btn").on('click', function () {
 		const fpath = $("#user_input").val();
 		AttachFile(fpath, true);
@@ -1957,14 +2172,18 @@ $(document).ready(function() {
 		case 'default':
 			$('#prompt_txta').val(ip_vals.chat);
 			break;
-		case 'pygmalion':
-			$('#prompt_txta').val(ip_vals.pygmalion);
-			break;
 		case 'think':
 			$('#prompt_txta').val(ip_vals.think);
 			break;
 		case 'think2':
+			if (format_mode == 0)
+				ipcRenderer.send('show-alert', { type: "info", msg: "This prompt requires text formatting to be enabled (see Other Settings on the Settings tab)." });
 			$('#prompt_txta').val(ip_vals.think2);
+			break;
+		case 'research':
+			if (format_mode == 0)
+				ipcRenderer.send('show-alert', { type: "info", msg: "This prompt requires text formatting to be enabled (see Other Settings on the Settings tab)." });
+			$('#prompt_txta').val(ip_vals.research);
 			break;
 		case 'tools':
 			$('#prompt_txta').val(ip_vals.tools);

@@ -15,7 +15,7 @@ First you will need to install Python:
 - [Python](https://www.python.org/downloads/windows/) (3.12.x recommended)
 
 CUDA is optional but highly recommended if you have an Nvidia GPU:
-- [CUDA](https://developer.nvidia.com/cuda-toolkit-archive) (12.4 recommended)
+- [CUDA](https://developer.nvidia.com/cuda-toolkit-archive) (12.8 recommended)
 
 Now open a command prompt as an administrator and create a virtual Python environment using this command:
 ```
@@ -36,7 +36,17 @@ Replace `C:/AI_UI/` with the location where AI UI was extracted (should contain 
 
 If your GPU supports CUDA then run this command before installing the requirements in the previous step:
 ```
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+Now exit the virtual environment and install [Node.js](https://nodejs.org) for Windows. It should include the Node.js package manager.
+
+Now navigate to the AI UI app folder then install the required Node.js packages using these commands:
+```
+cd C:/AI_UI/resources/app
+```
+```
+npm install
 ```
 </details>
 
@@ -69,7 +79,7 @@ Replace `./AI_UI/` with the location where AI UI was extracted (should contain e
 
 If your GPU supports CUDA then run this command before installing the requirements in the previous step:
 ```
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
 Now exit the virtual environment and run this command to install the nodejs package manager:
@@ -101,6 +111,14 @@ If you place AI UI into your Program Files directory or any other protected dire
 
 Before starting AI UI from a terminal, make sure you navigate to the location where the electron binary is located instead of trying to launch it from another directory. If you don't do this AI UI will use the wrong working directory and it will fail to read/write files.
 
+## Upgrading
+
+New versions of AI UI often require new Python or Node.js packages. Refer to the installation instructions for your platform and follow the steps for installing the Node.js requirements. To install any new Python requirements and update any existing Python packages, run the following command (activate the virtual environment first):
+
+```
+pip install -U -r /path/to/AI_UI/engine/requirements.txt
+```
+
 ## Getting Started
 
 After all the requirements have been installed you can launch the AI UI app. To get started you will need to visit the Settings tab so the engine knows where to find things like the Python environment and your model files.
@@ -113,4 +131,4 @@ If you want to generate images or want the chat bot to send messages with images
 
 ## Model Files
 
-This repository doesn't contain the large model files from MakeItTalk, Wav2Lip, or SadTalker. They will be automatically downloaded by AI UI when they are needed.
+This repository doesn't contain the model files from MakeItTalk, Wav2Lip, or SadTalker. They will be automatically downloaded by AI UI when they are needed.

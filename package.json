@@ -1,19 +1,21 @@
 {
   "name": "AI_UI",
   "displayName": "AI UI",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": "Bitfreak Software",
   "description": "AI User Interface",
   "main": "main.js",
   "scripts": {
     "start": "electron ."
   },
-  "devDependencies": {
-    "electron": "^23.1.4"
-  },
   "dependencies": {
+    "@vscode/markdown-it-katex": "^1.1.2",
     "adm-zip": "^0.5.10",
     "highlight.js": "^11.11.1",
-    "jquery": "^3.6.4"
+    "jquery": "^3.6.4",
+    "markdown-it": "^14.1.0",
+    "markdown-it-emoji": "^3.0.0",
+    "markdown-it-footnote": "^4.0.0",
+    "markdown-it-task-lists": "^2.1.1"
   }
 }

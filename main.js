@@ -461,6 +461,26 @@ function GotTools(tool_funcs) {
 	win.webContents.send('got-tools', { tools: tool_funcs });
 }
 
+function StreamText(stream_txt, txtgen_stream) {
+	if (txtgen_stream) {
+		win.webContents.send('txtgen-stream-text', { txt: stream_txt });
+	} else {
+		win.webContents.send('stream-text', { txt: stream_txt });
+	}
+}
+
+function StreamStart(txtgen_stream) {
+	if (txtgen_stream) {
+		win.webContents.send('txtgen-stream-start');
+	} else {
+		win.webContents.send('stream-start');
+	}
+}
+
+ipcMain.handle('stop-stream', (event) => {
+	core.forceStopBot();
+});
+
 ipcMain.on('send-msg', (event, payload) => {
 	core.sendMsg(payload.msg);
 });
@@ -691,6 +711,11 @@ ipcMain.on('config-app', (event, payload) => {
 	});
 });
 
+ipcMain.on('config-app-other', (event, payload) => {
+	core.configOther(payload, true);
+	core.sendMsg('config_other');
+});
+
 ipcMain.on('config-other', (event, payload) => {
 	core.configOther(payload);
 	SetRecShortcuts(payload.start_rec_keys, payload.stop_rec_keys);
@@ -786,7 +811,10 @@ ipcMain.handle('restart-script', (event) => {
 });
 
 ipcMain.handle('start-script', (event) => {
-	core.setCallbacks(ShowBotMsg, ShowGenTxt, ShowGenTTS, ShowGenASR, ShowGenImg, ShowClonedVoice, ChatAIReady, ChatAIEnded, AddVoices, ClearVoices, PlayAudio, AppendLog, GotAvatar, GotTools);
+	core.setCallbacks(
+		ShowBotMsg, ShowGenTxt, ShowGenTTS, ShowGenASR, ShowGenImg, ShowClonedVoice, ChatAIReady, ChatAIEnded,
+		AddVoices, ClearVoices, PlayAudio, AppendLog, GotAvatar, GotTools, StreamStart, StreamText
+	);
 	if (fs.existsSync('./config.json')) {
 		win.webContents.send('load-config', {configs:core.getConfigs(), skip_inputs:false});
 		CheckModelsExist(core.getConfigs().chat.anim_mode);
