@@ -1016,7 +1016,9 @@ def StreamText(txt_streamer, gen_kwargs):
 	
 	if thread.exception:
 		thread.join()
-		return "ERROR: failed to start text stream thread"
+		print("[AIUI_STREAM_END]", flush=True)
+		time.sleep(0.1)
+		return "ERROR: model does not support text streaming"
 	
 	for new_text in txt_streamer:
 		if thread.exception:
@@ -1060,23 +1062,24 @@ def GenReply(it, rl):
 			tokenizer=tokenizer, streamer=txt_streamer, min_new_tokens=gen_min, max_new_tokens=gen_max,
 			temperature=rl, top_k=top_k, top_p=top_p, typical_p=typical_p, repetition_penalty=rep_penalty, stop_strings=end_strings
 		)
-	elif type(it) is dict:
-		it['do_sample'] = do_sample
-		it['num_beams'] = num_beams
-		it['num_beam_groups'] = beam_groups
-		it['tokenizer'] = tokenizer
-		it['streamer'] = txt_streamer
-		it['min_new_tokens'] = gen_min
-		it['max_new_tokens'] = gen_max
-		it['temperature'] = rl
-		it['top_k'] = top_k
-		it['top_p'] = top_p
-		it['typical_p'] = typical_p
-		it['repetition_penalty'] = rep_penalty
-		it['stop_strings'] = end_strings
-		gen_kwargs = it
 	else:
-		sys.exit("ERROR: unexpected input token format")
+		try:
+			it['do_sample'] = do_sample
+			it['num_beams'] = num_beams
+			it['num_beam_groups'] = beam_groups
+			it['tokenizer'] = tokenizer
+			it['streamer'] = txt_streamer
+			it['min_new_tokens'] = gen_min
+			it['max_new_tokens'] = gen_max
+			it['temperature'] = rl
+			it['top_k'] = top_k
+			it['top_p'] = top_p
+			it['typical_p'] = typical_p
+			it['repetition_penalty'] = rep_penalty
+			it['stop_strings'] = end_strings
+			gen_kwargs = it
+		except:
+			sys.exit("ERROR: unexpected input token format")
 	
 	if txt_streamer == None:
 		with torch.no_grad():
@@ -1109,11 +1112,29 @@ def GenText(it, nt, mt, ds, nb, ng, rl, tk, tp, ty, rp):
 		print("GEN_STREAM:", flush=True)
 		txt_streamer = TextIteratorStreamer(tokenizer, skip_prompt=True)
 	
-	gen_kwargs = dict(
-		inputs=it, do_sample=ds, num_beams=nb, num_beam_groups=ng,
-		tokenizer=tokenizer, streamer=txt_streamer, min_new_tokens=nt, max_new_tokens=mt,
-		temperature=rl, top_k=tk, top_p=tp, typical_p=ty, repetition_penalty=rp
-	)
+	if isinstance(it, torch.Tensor) or type(it) is list:
+		gen_kwargs = dict(
+			inputs=it, do_sample=ds, num_beams=nb, num_beam_groups=ng,
+			tokenizer=tokenizer, streamer=txt_streamer, min_new_tokens=nt, max_new_tokens=mt,
+			temperature=rl, top_k=tk, top_p=tp, typical_p=ty, repetition_penalty=rp
+		)
+	else:
+		try:
+			it['do_sample'] = ds
+			it['num_beams'] = nb
+			it['num_beam_groups'] = ng
+			it['tokenizer'] = tokenizer
+			it['streamer'] = txt_streamer
+			it['min_new_tokens'] = nt
+			it['max_new_tokens'] = mt
+			it['temperature'] = rl
+			it['top_k'] = tk
+			it['top_p'] = tp
+			it['typical_p'] = ty
+			it['repetition_penalty'] = rp
+			gen_kwargs = it
+		except:
+			sys.exit("ERROR: unexpected input token format")
 	
 	if txt_streamer == None:
 		with torch.no_grad():
@@ -1767,9 +1788,12 @@ while (True):
 		typp = float(input())
 		repp = float(input())
 		if tokenizer == None: LoadTokenizer()
-		in_tokens = tokenizer(start_txt, return_tensors="pt").input_ids.to(comp_dev)
-		text = GenText(in_tokens, gmin, gmax, dsmp, numb, numg, temp, topk, topp, typp, repp)
-		print("GEN_OUTPUT:"+text.replace("\n", "[AI_UI_BR]"), flush=True)
+		try:
+			in_tokens = tokenizer(start_txt, return_tensors="pt").input_ids.to(comp_dev)
+			text = GenText(in_tokens, gmin, gmax, dsmp, numb, numg, temp, topk, topp, typp, repp)
+			print("GEN_OUTPUT:"+text.replace("\n", "[AI_UI_BR]"), flush=True)
+		except:
+			print("GEN_OUTPUT:ERROR: text gen failed, model may only work as chat bot", flush=True)
 		time.sleep(0.1)
 		continue
 	elif msg == "speech_recog":

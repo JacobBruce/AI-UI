@@ -1,7 +1,7 @@
 {
   "name": "AI_UI",
   "displayName": "AI UI",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "author": "Bitfreak Software",
   "description": "AI User Interface",
   "main": "main.js",

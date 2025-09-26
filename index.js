@@ -694,6 +694,7 @@ ipcRenderer.on('bot-msg', (event, payload) => {
 		bot_msg = bot_msg.replaceAll("AI_UI_AMP", "&");
 		if (last_bmb !== null)  {
 			last_bmb.html('<div class="bot_msg">'+bot_msg+'</div>');
+			if (last_bmb.is(":hidden")) last_bmb.show();
 		} else {
 			$('#chat_log').append('<div class="msg_box"><div class="bot_msg">'+bot_msg+'</div></div>');
 			last_bmb = $("#chat_log div.msg_box").last();
@@ -1654,6 +1655,10 @@ function ApplySettings() {
 	} else {
 		let new_settings = false;
 		if (gen_mode != genmd || format_mode != formatm || enable_tooluse != etooluse || hf_token != hftoken) {
+			if (thinking || generating) {
+				ipcRenderer.send('show-alert', { msg: 'Wait for the current task to finish.' });
+				return;
+			}
 			ipcRenderer.send('config-app-other', {
 				gen_mode: genmd, format_mode: formatm, enable_tooluse: etooluse, hf_token: hftoken
 			});
