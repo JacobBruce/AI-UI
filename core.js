@@ -104,6 +104,10 @@ function SetChatFiles(chat_files) {
 	CHAT_FILES = chat_files;
 }
 
+function SetBotVoice(voice_id) {
+	CHAT_CONFIG.bot_voice = voice_id;
+}
+
 function ForceStopBot() {
 	FORCE_STOP = true;
 }
@@ -636,7 +640,7 @@ function StartScript() {
 			for (let i=0; i<voices.length; i++) {
 				const voice = voices[i].trim().replace('VOICE_NAME:','').split('VOICE_ID:');
 				if (voice.length != 2) continue;
-				if (voice[0].endsWith('.npy') || voice[0].endsWith('.txt')) {
+				if (voice[0].endsWith('.npy') || voice[0].endsWith('.txt') || voice[0].endsWith('.wav')) {
 					voice_names.push(voice[0].substring(0, voice[0].length-4));
 				} else if (voice[0].endsWith('.pt')) {
 					voice_names.push(voice[0].substring(0, voice[0].length-3));
@@ -691,6 +695,7 @@ module.exports = {
 	setReadText: SetReadText,
 	setChatFiles: SetChatFiles,
 	setCloneVoice: SetCloneVoice,
+	setBotVoice: SetBotVoice,
 	setSaveFile: SetSaveFile,
 	forceStopBot: ForceStopBot,
 	engineRunning: EngineRunning,

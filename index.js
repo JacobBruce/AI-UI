@@ -1059,6 +1059,10 @@ function OpenTTSDir() {
 	ShowInFolder('TTS_EMBEDS');
 }
 
+function OpenAIADir() {
+	ShowInFolder('AI_AUDIO');
+}
+
 function SaveVoice() {
 	const voice_name = CleanFilename($('#voice_name').val()).replaceAll(' ', '_');
 	if (voice_name == '') {
@@ -1091,7 +1095,10 @@ ipcRenderer.on('clone-result', (event, payload) => {
 	if (!payload.voice.startsWith('ERROR:')) {
 		const voice_info = payload.voice.split(':');
 		if (voice_info.length == 2) {
-			if ($('#ttsgen_mode').find(':selected').val() > 0) $('#tts_voices').val(voice_info[1]);
+			if ($('#ttsgen_mode').find(':selected').val() > 0) {
+				if ($("#tts_voices option[value='"+voice_info[1]+"']").length > 0)
+					$('#tts_voices').val(voice_info[1]);
+			}
 			$('#tts_result').html(EncodeHTML(voice_info[0].replaceAll('_', ' '))+' has been added to the list of voices.');
 		} else {
 			$('#tts_result').html('An unexpected error occurred.');
@@ -1127,6 +1134,8 @@ function GenSpeech() {
 ipcRenderer.on('tts-result', (event, payload) => {
 	if (payload.wav == 'ERROR') {
 		$('#tts_result').html('There was an error generating the speech.');
+	} else if (payload.wav.startsWith('ERROR:')) {
+		$('#tts_result').html(payload.wav);
 	} else if (payload.wav == 'NO_VOICES') {
 		$('#tts_result').html('There are no voices available for the selected speech engine.');
 	} else {
@@ -1917,6 +1926,8 @@ function ShowInFolder(elem) {
 	} else if (typeof elem == "string") {
 		if (elem == 'TTS_EMBEDS') {
 			file_path = script_dir+'/embeddings/';
+		} else if (elem == 'AI_AUDIO') {
+			file_path = script_dir+'/ai_audio/';
 		} else {
 			file_path = StripFileProto(elem);
 			file_path = file_path.substr(0, file_path.indexOf('?'));
@@ -2242,7 +2253,7 @@ $(document).ready(function() {
 	});
 	
 	$('#vclone_mode').on('change', function() {
-		if ($(this).find(':selected').val() == 1) {
+		if ($(this).find(':selected').val() > 0) {
 			$('#ts_txt_row').show();
 		} else {
 			$('#ts_txt_row').hide();

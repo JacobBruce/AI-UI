@@ -284,6 +284,8 @@
 							<select id="vclone_mode" class="cfg_drp">
 								<option value="0">SpeechBrain/SpeechT5 (16khz)</option>
 								<option value="1">ChatTTS (24khz)</option>
+								<option value="3">VoxCPM (16khz)</option>
+								<option value="4">NeuTTS Air (16khz)</option>
 							</select>
 							<div id="ts_txt_row" class="hidden">
 								<span class="cfg_lbl">Transcript <img class="help_icon" width="16" height="16" title="Text transcript of the speech in the Voice Sample audio file." /></span>
@@ -293,9 +295,10 @@
 							<input type="text" id="voice_sample" class="cfg_txt"> <button class="btn browse_btn" onclick="OpenSample('voice_sample')">BROWSE</button>
 							<span class="cfg_lbl">Voice Name <img class="help_icon" width="16" height="16" title="Choose a name for the cloned voice (e.g. British Male 1) so you can select it from the list of voices." /></span>
 							<input type="text" id="voice_name" class="cfg_txt">
+							<button id="clone_voice_btn" class="btn cfg_btn" onclick="CloneVoice()" disabled>CLONE VOICE</button>
 							<br><br>
 						</div>
-						<button id="clone_voice_btn" class="btn cfg_btn" onclick="CloneVoice()" disabled>CLONE VOICE SAMPLE</button>
+						<button id="aia_dir_btn" class="btn cfg_btn" onclick="OpenAIADir()">OPEN AUDIO FOLDER</button>
 						<button id="tts_dir_btn" class="btn cfg_btn" onclick="OpenTTSDir()">OPEN VOICE FOLDER</button>
 					</center>
 				</div>
@@ -388,7 +391,7 @@
 							<div class="browse_btn"></div> <input type="text" id="script_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('script_dir')">BROWSE</button>
 							<span class="cfg_lbl">Python Binary <img class="help_icon" width="16" height="16" title="The location of your Python binary/executable file (on Windows it should be a file called python.exe)" /></span>
 							<div class="browse_btn"></div> <input type="text" id="python_bin" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFile('python_bin')">BROWSE</button>
-							<span class="cfg_lbl">Text Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. PygmalionAI/pygmalion-6b) or the directory containing the text generation model (usually contains .safetensors files)" /></span>
+							<span class="cfg_lbl">Text Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. Qwen/Qwen3-8B) or the directory containing the text generation model (usually contains .safetensors files)" /></span>
 							<div class="browse_btn"></div> <input type="text" id="model_dir" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFolder('model_dir')">BROWSE</button>
 							<span class="cfg_lbl">Image Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. dreamlike-art/dreamlike-photoreal-2.0) or the file/folder with the image generation model (allows image generation)" /></span>
 							<div class="browse_btn"></div> <input type="text" id="im_model" class="cfg_txt" value=""> <button class="btn browse_btn" onclick="OpenFileFolder('im_model')">BROWSE</button>
@@ -428,6 +431,8 @@
 								<option value="0">SpeechT5</option>
 								<option value="1">ChatTTS</option>
 								<option value="2">Kokoro</option>
+								<option value="3">VoxCPM</option>
+								<option value="4">NeuTTS Air</option>
 							</select>
 							<span class="cfg_lbl">Compute Device <img class="help_icon" width="16" height="16" title="If your GPU doesn't support CUDA or you don't have enough VRAM then select the CPU or Auto option. Auto will try to use all available compute devices." /></span>
 							<select id="device_select" class="cfg_drp">

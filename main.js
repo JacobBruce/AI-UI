@@ -538,12 +538,18 @@ ipcMain.on('clone-voice', (event, payload) => {
 	const workDir = core.getConfigs().app.script_dir;
 	core.setCloneVoice(payload);
 	let voiceFile = workDir+'/embeddings/'+payload.name+'.npy';
-	if (payload.model == 1) {
+	if (payload.model == 1 || payload.model == 3 || payload.model == 4) {
 		if (payload.transcript.trim() == '') {
-			dialog.showMessageBox(win, { type: "error", message: "Transcript text cannot be empty!" });
+			ShowGenTTS("ERROR: Transcript text cannot be empty!");
 			return;
 		}
-		voiceFile = workDir+'/embeddings/ChatTTS/'+payload.name+'.txt';
+		if (payload.model == 1) {
+			voiceFile = workDir+'/embeddings/ChatTTS/'+payload.name+'.txt';
+		} else if (payload.model == 3) {
+			voiceFile = workDir+'/embeddings/VoxCPM/'+payload.name+'.wav';
+		} else {
+			voiceFile = workDir+'/embeddings/NeuTTS/'+payload.name+'.npy';
+		}
 	}
 	if (fs.existsSync(voiceFile)) {
 		dialog.showMessageBox(win, { type: "question", title: "Confirm Action", 
@@ -683,13 +689,12 @@ ipcMain.on('config-app', (event, payload) => {
 	dialog.showMessageBox(win, { type: "question", title: "Confirm Action", 
 	noLink: true, message: "Updating these settings will restart the AI engine. Proceed?", buttons: ["Confirm","Cancel"] }).then(value => {
 		if (!value.response) {
+			if (payload.smodel_type != core.getConfigs().app.smodel_type) core.setBotVoice(0)
 			core.configApp(payload);
 			ChatAIEnded('Initializing AI Engine... please wait.');
 			win.webContents.send('load-config', {configs:core.getConfigs(), skip_inputs:true});
-			if (core.stopScript('RESTART')) {
-				core.startScript();
-			}
-			let customModel = false;
+			if (core.stopScript('RESTART')) core.startScript();
+			/*let customModel = false;
 			if (payload.model_type == 3 || payload.model_type == 4) {
 				customModel = true;
 			} else {
@@ -698,13 +703,13 @@ ipcMain.on('config-app', (event, payload) => {
 					const arg = args[i].trim();
 					if (arg.startsWith('custom_model_code=') || arg.startsWith('custom_token_code=')) {
 						let val = arg.substring(arg.indexOf('=')).toLowerCase();
-						if (arg == 'false' || arg == '0') continue;
+						if (val == 'false' || val == '0') continue;
 						customModel = true;
 						break;
 					}
 				}
 			}
-			/*if (customModel && payload.model_dir.length > 1 && (payload.model_dir[1] == ':' || fs.existsSync(payload.model_dir))) {
+			if (customModel && payload.model_dir.length > 1 && (payload.model_dir[1] == ':' || fs.existsSync(payload.model_dir))) {
 				dialog.showMessageBox(win, { type: "warning", message: "It appears you are using a model with custom code, this may not load from a local directory." });
 			}*/
 		}

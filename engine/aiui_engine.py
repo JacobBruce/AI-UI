@@ -15,7 +15,6 @@ import librosa
 import torch
 import random
 import pyttsx3
-import ChatTTS
 import transformers
 import numpy as np
 import torch.nn as nn
@@ -25,8 +24,8 @@ from datetime import datetime
 from huggingface_hub import login
 from scipy.io import wavfile
 from scipy.signal import resample
-from tools.av import load_audio
-from tools.text_norm import NormalizeText
+from utils.av import load_audio
+from utils.text_norm import NormalizeText
 from tools.rp_funcs import SaveGame, LoadGame, NewGame
 from urllib.request import urlopen
 from qwen_vl_utils import process_vision_info
@@ -34,7 +33,6 @@ from speechbrain.inference import EncoderClassifier
 from MakeItTalk.main_end2end import ResampleAudio, LoadFace, AnimFace
 from Wav2Lip.inference import load_face, anim_face
 from SadTalker.inference import loadface, animface
-from phonemizer.backend.espeak.wrapper import EspeakWrapper
 from diffusers.utils import load_image
 from diffusers.quantizers import PipelineQuantizationConfig
 from diffusers import BitsAndBytesConfig as DiffusersBitsAndBytesConfig
@@ -44,31 +42,6 @@ from diffusers import AutoencoderKL, DDIMScheduler, UNet2DConditionModel, SD3Tra
 from transformers import TextIteratorStreamer, StoppingCriteria, StoppingCriteriaList, SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan, pipeline
 from transformers import AutoTokenizer, AutoProcessor, AutoModel, AutoModelForCausalLM, AutoModelForImageTextToText, AutoModelForSpeechSeq2Seq
 from transformers import CLIPTextModel, CLIPTextModelWithProjection, T5EncoderModel, Qwen2_5_VLForConditionalGeneration
-
-kokoro_retry = False
-kokoro_loaded = False
-
-try:
-	from kokoro import KModel, KPipeline
-	kokoro_loaded = True
-except:
-	espeak_lib_win = "C:/Program Files/eSpeak NG/libespeak-ng.dll"
-	espeak_lib_mac = "/opt/homebrew/lib/libespeak-ng.dylib"
-
-	if os.path.isfile(espeak_lib_win):
-		EspeakWrapper.set_library(espeak_lib_win)
-		kokoro_retry = True
-	elif os.path.isfile(espeak_lib_mac):
-		EspeakWrapper.set_library(espeak_lib_mac)
-		kokoro_retry = True
-
-if kokoro_retry:
-	try:
-		from kokoro import KModel, KPipeline
-		kokoro_loaded = True
-	except:
-		print("ERROR: failed to load Kokoro, ensure espeak-ng is installed on your system", flush=True)
-		time.sleep(0.1)
 
 ###### Config/Vars ######
 torch.set_float32_matmul_precision('high')
@@ -338,6 +311,10 @@ for arg in model_args:
 		min_res_vram_mb = int(carg.replace("min_res_vram_mb=", "", 1))
 		reserve_vram_mb = min_res_vram_mb + ext_res_vram_mb
 
+def PrintSleep(txt_str, sleep_time=0.1, flush=True):
+	print(txt_str, flush=flush)
+	time.sleep(0.1)
+
 def ReserveVRAM():
 	global reserved_vram
 	if reserve_vram_mb <= 0 or reserved_vram != None: return
@@ -376,10 +353,13 @@ def SetWorkingDir(face_anim_mode):
 		os.chdir(work_dir + '/SadTalker/')
 
 def ReadTextFile(txt_file, txt_encoding='utf-8'):
-	f = open(txt_file, "rb")
-	result = f.read().decode(txt_encoding)
-	f.close()
-	return result
+	if os.path.isfile(txt_file):
+		f = open(txt_file, "rb")
+		result = f.read().decode(txt_encoding)
+		f.close()
+		return result
+	else:
+		return None
 
 def WriteTextFile(txt_file, txt_str, txt_encoding='utf-8'):
 	f = open(txt_file, "wb")
@@ -435,8 +415,7 @@ def LoadToolFuncs():
 		tools_str = ''
 		for f in tool_funcs:
 			tools_str += json.dumps(transformers.utils.get_json_schema(f))+','
-		print("TOOL_FUNCS:"+tools_str.rstrip(',').replace("\n", "[AI_UI_BR]"), flush=True)
-		time.sleep(0.1)
+		PrintSleep("TOOL_FUNCS:"+tools_str.rstrip(',').replace("\n", "[AI_UI_BR]"))
 
 ###### TTS Stuff ######
 
@@ -470,6 +449,43 @@ anim_mode = int(input())
 last_smt_val = smodel_type
 
 SetWorkingDir(anim_mode)
+
+kokoro_loaded = False
+chattts_loaded = False
+voxcpm_loaded = False
+neutts_loaded = False
+
+def LoadKokoro():
+	try:
+		global kokoro, kokoro_loaded
+		import kokoro
+		kokoro_loaded = True
+	except Exception as e:
+		sys.exit(f"ERROR: failed to load Kokoro, try 'pip install kokoro' and ensure espeak-ng is installed on your system\n\nException: {e}")
+
+def LoadNeuTTS():
+	try:
+		global NeuTTSAir, neutts_loaded
+		from utils.neutts import NeuTTSAir
+		neutts_loaded = True
+	except Exception as e:
+		sys.exit(f"ERROR: failed to load NeuTTSAir, try 'pip install neucodec' and ensure espeak-ng is installed on your system\n\nException: {e}")
+
+def LoadChatTTS():
+	try:
+		global ChatTTS, chattts_loaded
+		import ChatTTS
+		chattts_loaded = True
+	except Exception as e:
+		sys.exit(f"ERROR: failed to load ChatTTS, try 'pip install chattts'\n\nException: {e}")
+
+def LoadVoxCPM():
+	try:
+		global VoxCPM, voxcpm_loaded
+		from voxcpm import VoxCPM
+		voxcpm_loaded = True
+	except Exception as e:
+		sys.exit(f"ERROR: failed to load VoxCPM, try 'pip install voxcpm'\n\nException: {e}")
 	
 def LoadSpeaker(voice_index):
 	result = None
@@ -479,6 +495,8 @@ def LoadSpeaker(voice_index):
 	elif smodel_type == 1:
 		if voice_index > 0:
 			result = ReadTextFile(work_dir+"/embeddings/ChatTTS/"+ai_voices[voice_index])
+	elif smodel_type == 4:
+		result = torch.tensor(np.load(work_dir+"/embeddings/NeuTTS/"+ai_voices[voice_index])).to(comp_dev)
 	
 	return result
 	
@@ -491,9 +509,7 @@ def LoadSysVoices():
 	for voice in voices:
 		voice_list += "VOICE_NAME:"+voice.name+"VOICE_ID:"+voice.id+"\n"
 
-	if voice_list != 'SYS_VOICES:':
-		print(voice_list, flush=True)
-		time.sleep(0.1)
+	if voice_list != 'SYS_VOICES:': PrintSleep(voice_list)
 
 def LoadAIVoices(speaker_name=''):
 	global ai_voices
@@ -509,6 +525,12 @@ def LoadAIVoices(speaker_name=''):
 	elif smodel_type == 2:
 		ai_voices = ReadTextFile(work_dir+"/embeddings/Kokoro/voices.txt").replace("\r", '').split("\n")
 		ai_voices.sort()
+	elif smodel_type == 3:
+		ai_voices = glob.glob1(work_dir+"/embeddings/VoxCPM/", '*.wav')
+		ai_voices.sort()
+	elif smodel_type == 4:
+		ai_voices = glob.glob1(work_dir+"/embeddings/NeuTTS/", '*.npy')
+		ai_voices.sort()
 	
 	voice_list = 'AI_VOICES:'
 	
@@ -516,9 +538,7 @@ def LoadAIVoices(speaker_name=''):
 		if ai_voices[i] == speaker_name: speaker_index = i
 		voice_list += "VOICE_NAME:"+ai_voices[i]+"VOICE_ID:"+str(i)+"\n"
 	
-	if voice_list != 'AI_VOICES:':
-		print(voice_list, flush=True)
-		time.sleep(0.1)
+	if voice_list != 'AI_VOICES:': PrintSleep(voice_list)
 		
 	return speaker_index
 
@@ -550,33 +570,45 @@ def LoadTTSVoices():
 	LoadAIVoices()	
 	ConfigTTSEngine()
 
-def LoadTTSEngine(force_ai_mode=None):
+def LoadTTSEngine(force_ai_mode=None, tts_mid=None, tts_cid=None):
 	global tts_model, processor, vocoder, last_smt_val
 	
+	if tts_mid == None: tts_mid = tts_model_id
+	if tts_cid == None: tts_cid = vocoder_model
+		
 	if (force_ai_mode == True or tts_mode > 0) and (tts_model == None or smodel_type != last_smt_val):
 		if smodel_type == 0:
-			if tts_model_id == '':
+			if tts_mid == '':
 				processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
 				tts_model = SpeechT5ForTextToSpeech.from_pretrained("microsoft/speecht5_tts").to(comp_dev)
 			else:
-				processor = SpeechT5Processor.from_pretrained(tts_model_id)
-				tts_model = SpeechT5ForTextToSpeech.from_pretrained(tts_model_id).to(comp_dev)
-			if vocoder_model == '':
+				processor = SpeechT5Processor.from_pretrained(tts_mid)
+				tts_model = SpeechT5ForTextToSpeech.from_pretrained(tts_mid).to(comp_dev)
+			if tts_cid == '':
 				vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(comp_dev)
 			else:
-				vocoder = SpeechT5HifiGan.from_pretrained(vocoder_model).to(comp_dev)
+				vocoder = SpeechT5HifiGan.from_pretrained(tts_cid).to(comp_dev)
 		elif smodel_type == 1:
+			if not chattts_loaded: LoadChatTTS()
 			tts_model = ChatTTS.Chat()
-			if tts_model_id == '':
+			if tts_mid == '':
 				tts_model.load(compile=torch_compile, source="huggingface")
 			else:
-				tts_model.load(compile=torch_compile, source="custom", custom_path=tts_model_id)
+				tts_model.load(compile=torch_compile, source="custom", custom_path=tts_mid)
 		elif smodel_type == 2:
-			if not kokoro_loaded:
-				print("ERROR: failed to load Kokoro, ensure espeak-ng is installed on your system", flush=True)
-				time.sleep(0.1)
-				return
-			tts_model = KModel()
+			if not kokoro_loaded: LoadKokoro()
+			tts_model = kokoro.KModel()
+		elif smodel_type == 3:
+			if not voxcpm_loaded: LoadVoxCPM()
+			if tts_mid == '':
+				tts_model = VoxCPM.from_pretrained("openbmb/VoxCPM-0.5B", load_denoiser=False)
+			else:
+				tts_model = VoxCPM.from_pretrained(tts_mid, load_denoiser=False)
+		elif smodel_type == 4:
+			if not neutts_loaded: LoadNeuTTS()
+			backbone_id = "neuphonic/neutts-air" if tts_mid == '' else tts_mid
+			codec_id = "neuphonic/neucodec" if tts_cid == '' else tts_cid
+			tts_model = NeuTTSAir(backbone_repo=backbone_id, backbone_device=comp_dev, codec_repo=codec_id, codec_device=comp_dev)
 	
 	last_smt_val = smodel_type
 	ConfigTTSEngine()
@@ -605,7 +637,7 @@ def CloneVoice(clone_model, speaker_name, speaker_wav, transcript=None):
 				signal = ResampleAudio(fs, signal, 16000)
 			else:
 				signal = torch.tensor(signal)
-		else:
+		elif clone_model == 1:
 			if transcript == None or transcript == '':
 				return 'ERROR:Transcript text is required!'
 			signal = load_audio(speaker_wav, 24000)
@@ -613,6 +645,11 @@ def CloneVoice(clone_model, speaker_name, speaker_wav, transcript=None):
 			#	signal = load_audio(speaker_wav, 24000)
 			#else:
 			#	signal, fs = load_audio(speaker_wav)
+		elif clone_model == 3 or clone_model == 4:
+			if transcript == None or transcript == '':
+				return 'ERROR:Transcript text is required!'
+			if clone_model == 3:
+				signal, sr = librosa.load(speaker_wav, sr=16000, mono=True)
 	except:
 		return 'ERROR:There was an error reading the voice sample.'
 
@@ -631,28 +668,44 @@ def CloneVoice(clone_model, speaker_name, speaker_wav, transcript=None):
 				embeddings = torch.nn.functional.normalize(embeddings, dim=2)
 				embeddings = embeddings.squeeze().cpu().numpy()
 		else:
-			if tts_mode != 1 or smodel_type != 1 or tts_model == None or smodel_type != last_smt_val:
-				lsmt = smodel_type
-				smodel_type = 1
-				LoadTTSEngine(True)
-				smodel_type = lsmt
+			if tts_mode != 1 or smodel_type != clone_model or tts_model == None or smodel_type != last_smt_val:
+				if clone_model != 3:
+					lsmt = smodel_type
+					smodel_type = clone_model
+					LoadTTSEngine(True, '', '')
+					smodel_type = lsmt
 			
-			embeddings = tts_model.sample_audio_speaker(signal)
+			if clone_model == 1:
+				embeddings = tts_model.sample_audio_speaker(signal)
+			elif clone_model == 4:
+				embeddings = tts_model.encode_reference(speaker_wav).cpu().numpy()
 	except:
 		return 'ERROR:There was an error with the cloning model.'
-			
+	
 	try:
-		if len(embeddings) > 0:
+		if clone_model == 3:
+			ts_dir = work_dir+"/embeddings/VoxCPM/transcripts/"
+			if not os.path.exists(ts_dir): os.mkdir(ts_dir)
+			WriteTextFile(ts_dir+speaker_name+".txt", transcript)
+			sf.write(work_dir+"/embeddings/VoxCPM/"+speaker_name+".wav", signal, 16000)
+			voice_id = LoadAIVoices(speaker_name+'.wav')
+		elif len(embeddings) > 0:
 			if clone_model == 0:
 				np.save(work_dir+"/embeddings/"+speaker_name+".npy", embeddings)
 				voice_id = LoadAIVoices(speaker_name+'.npy')
-			else:
+			elif clone_model == 1:
 				#ref_txt = tts_model.infer(transcript, refine_text_only=True)
 				ts_dir = work_dir+"/embeddings/ChatTTS/transcripts/"
 				if not os.path.exists(ts_dir): os.mkdir(ts_dir)
 				WriteTextFile(ts_dir+speaker_name+".txt", transcript)
 				WriteTextFile(work_dir+"/embeddings/ChatTTS/"+speaker_name+".txt", embeddings)
 				voice_id = LoadAIVoices(speaker_name+'.txt')
+			elif clone_model == 4:
+				ts_dir = work_dir+"/embeddings/NeuTTS/transcripts/"
+				if not os.path.exists(ts_dir): os.mkdir(ts_dir)
+				WriteTextFile(ts_dir+speaker_name+".txt", transcript)
+				np.save(work_dir+"/embeddings/NeuTTS/"+speaker_name+".npy", embeddings)
+				voice_id = LoadAIVoices(speaker_name+'.npy')
 		else:
 			return 'ERROR:There was an error generating the embeddings.'
 	except:
@@ -724,6 +777,8 @@ def TextToSpeechAI(text_str, wav_file, speaker_data, speech_vol, speech_rate, sp
 	text_chunks = []
 	wav_files = []
 	
+	if smodel_type != 3: text_str = NormalizeText(text_str)
+	
 	if len(text_str) > 256:
 		text_chunks = SentenceSplit(text_str)
 	else:
@@ -751,12 +806,34 @@ def TextToSpeechAI(text_str, wav_file, speaker_data, speech_vol, speech_rate, sp
 			sf.write(wav_part_file, speech[0], samplerate=24000)
 			wav_files.append(wav_part_file)
 		elif smodel_type == 2 and kokoro_loaded:
-			tts_pipeline = KPipeline(lang_code=ai_voices[voice_index][0], model=tts_model)
+			tts_pipeline = kokoro.KPipeline(lang_code=ai_voices[voice_index][0], model=tts_model)
 			tts_generator = tts_pipeline(txt, voice=ai_voices[voice_index], split_pattern='')
 			for i, (gs, ps, speech) in enumerate(tts_generator):
 				sf.write(wav_part_file, speech, samplerate=24000)
 				wav_files.append(wav_part_file)
 				break
+		elif smodel_type == 3 and voxcpm_loaded:
+			wav_path = work_dir+"/embeddings/VoxCPM/" + ai_voices[voice_index]
+			ts_text = ReadTextFile(work_dir+"/embeddings/VoxCPM/transcripts/" + StripEnd(ai_voices[voice_index], ".wav") + ".txt")
+			speech = tts_model.generate(
+				text=txt,
+				prompt_wav_path=wav_path,
+				prompt_text=ts_text,
+				cfg_value=2.0,
+				inference_timesteps=10,
+				normalize=True,
+				denoise=False,
+				retry_badcase=True,
+				retry_badcase_max_times=1,
+				retry_badcase_ratio_threshold=6.0
+			)
+			sf.write(wav_part_file, speech, samplerate=16000)
+			wav_files.append(wav_part_file)
+		elif smodel_type == 4 and neutts_loaded:
+			ts_file = work_dir+"/embeddings/NeuTTS/transcripts/" + StripEnd(ai_voices[voice_index], ".npy") + ".txt"
+			speech = tts_model.infer(txt, speaker_data, ReadTextFile(ts_file))
+			sf.write(wav_part_file, speech, samplerate=24000)
+			wav_files.append(wav_part_file)
 		else:
 			sys.exit("ERROR: no TTS model available for text-to-speech")
 	
@@ -837,8 +914,7 @@ def SpeechToText(speech_file):
 		if sr != sr_processor.feature_extractor.sampling_rate:
 			signal = ResampleSpeech(signal, sr, sr_processor.feature_extractor.sampling_rate)
 	except:
-		print("ERROR: failed to resample audio recording", flush=True)
-		time.sleep(0.1)
+		PrintSleep("ERROR: failed to resample audio recording")
 	result = sr_pipe(signal)
 	return result["text"]
 
@@ -1016,8 +1092,7 @@ def StreamText(txt_streamer, gen_kwargs):
 	
 	if thread.exception:
 		thread.join()
-		print("[AIUI_STREAM_END]", flush=True)
-		time.sleep(0.1)
+		PrintSleep("[AIUI_STREAM_END]")
 		return "ERROR: model does not support text streaming"
 	
 	for new_text in txt_streamer:
@@ -1036,8 +1111,7 @@ def StreamText(txt_streamer, gen_kwargs):
 	thread.join()
 	
 	time.sleep(0.1)
-	print("[AIUI_STREAM_END]", flush=True)
-	time.sleep(0.1)
+	PrintSleep("[AIUI_STREAM_END]")
 	
 	if thread.result == None:
 		return gen_text
@@ -1330,8 +1404,7 @@ def LoadIMGModel(exit_on_error=True, safety_check=None, vae_file=None, lora_file
 		if exit_on_error:
 			sys.exit(f"ERROR: failed to load image model ({e})")
 		else:
-			print(f"ERROR: failed to load image model ({e})", flush=True)
-			time.sleep(0.1)
+			PrintSleep(f"ERROR: failed to load image model ({e})")
 	
 	CleanVRAM()
 	ReserveVRAM()
@@ -1496,10 +1569,9 @@ def InitPrompt(have_prompt=False):
 		init_prompt = 'No prompt'
 		messages = []
 	if have_prompt:
-		print("CLEAR_DONE:"+init_prompt.replace("\n", "[AI_UI_BR]"), flush=True)
+		PrintSleep("CLEAR_DONE:"+init_prompt.replace("\n", "[AI_UI_BR]"))
 	else:
-		print("INIT_DONE:"+init_prompt.replace("\n", "[AI_UI_BR]"), flush=True)
-	time.sleep(0.1)
+		PrintSleep("INIT_DONE:"+init_prompt.replace("\n", "[AI_UI_BR]"))
 	
 def PrunePrompt():
 	global messages, prompt
@@ -1606,20 +1678,18 @@ while (True):
 			last_msg = messages[-1]
 			if "role" in last_msg and last_msg['role'] == bot_name:
 				if "content" in last_msg and isinstance(last_msg["content"], str):
-					print("BOT_NOANIM:"+last_msg["content"].replace("\n", "[AI_UI_BR]"), flush=True)
+					PrintSleep("BOT_NOANIM:"+last_msg["content"].replace("\n", "[AI_UI_BR]"))
 				else:
-					print("BOT_NOANIM:Game loaded.", flush=True)
+					PrintSleep("BOT_NOANIM:Game loaded.")
 			else:
-				print("BOT_NOANIM:Game loaded. WARNING: Roles have changed!", flush=True)
+				PrintSleep("BOT_NOANIM:Game loaded. WARNING: Roles have changed!")
 		else:
-			print("BOT_NOANIM:Game loaded.", flush=True)
-		time.sleep(0.1)
+			PrintSleep("BOT_NOANIM:Game loaded.")
 		continue
 	elif msg == "print_prompt":
 		print('----- START PROMPT -----')
 		print(prompt)
-		print('------ END PROMPT ------')
-		time.sleep(0.1)
+		PrintSleep('------ END PROMPT ------')
 		continue
 	elif msg == "update_prompt":
 		print("NEW_PROMPT:")
@@ -1648,8 +1718,7 @@ while (True):
 				else:
 					rag_files.append({"title": file_name,  "text": ReadTextFile(file_name)})
 			except:
-				print("ERROR: failed to read text from "+file_name, flush=True)
-		time.sleep(0.1)
+				PrintSleep("ERROR: failed to read text from "+file_name)
 		continue
 	elif msg == "attach_files":
 		print("CHAT_FILES:")
@@ -1693,10 +1762,9 @@ while (True):
 		SetWorkingDir(anim_mode)
 		if anim_mode != last_amode:
 			if LoadAvatar():
-				print("GOT_AVATAR:true", flush=True)
+				PrintSleep("GOT_AVATAR:true")
 			else:
-				print("GOT_AVATAR:false", flush=True)
-			time.sleep(0.1)
+				PrintSleep("GOT_AVATAR:false")
 		ConfigTTSEngine()
 		continue
 	elif msg == "config_ai":
@@ -1771,8 +1839,7 @@ while (True):
 				img_gen_mode = True
 		if im_model != None:
 			img_file = GenImage(img_prompt, neg_prompt, infer_steps, guidance, img_seed, img_width, img_height, True)
-			print("IMG_OUTPUT:"+img_file, flush=True)
-			time.sleep(0.1)
+			PrintSleep("IMG_OUTPUT:"+img_file)
 		continue
 	elif msg == "gen_text":
 		print("START_TEXT:")
@@ -1791,26 +1858,23 @@ while (True):
 		try:
 			in_tokens = tokenizer(start_txt, return_tensors="pt").input_ids.to(comp_dev)
 			text = GenText(in_tokens, gmin, gmax, dsmp, numb, numg, temp, topk, topp, typp, repp)
-			print("GEN_OUTPUT:"+text.replace("\n", "[AI_UI_BR]"), flush=True)
+			PrintSleep("GEN_OUTPUT:"+text.replace("\n", "[AI_UI_BR]"))
 		except:
-			print("GEN_OUTPUT:ERROR: text gen failed, model may only work as chat bot", flush=True)
-		time.sleep(0.1)
+			PrintSleep("GEN_OUTPUT:ERROR: text gen failed, model may only work as chat bot")
 		continue
 	elif msg == "speech_recog":
 		try:
 			text = SpeechToText(tempfile.gettempdir()+"/recording.wav").strip()
-			print("ASR_OUTPUT:"+text.replace("\n", " "), flush=True)
+			PrintSleep("ASR_OUTPUT:"+text.replace("\n", " "))
 		except:
-			print("ASR_OUTPUT:ERROR", flush=True)
-		time.sleep(0.1)
+			PrintSleep("ASR_OUTPUT:ERROR")
 		continue
 	elif msg == "gen_speech":
 		if not tts_ready:
-			print('TTS_OUTPUT:NO_VOICES', flush=True)
-			time.sleep(0.1)
+			PrintSleep('TTS_OUTPUT:NO_VOICES')
 			continue
 		print("TTS_TEXT:")
-		tts_text = NormalizeText(input().replace("[AI_UI_BR]", "\n"))
+		tts_text = input().replace("[AI_UI_BR]", "\n")
 		vckey = int(input())
 		vcvol = float(input())
 		vcrate = int(input())
@@ -1821,44 +1885,40 @@ while (True):
 				synthesizer.setProperty('voice', voices[vckey].id)
 				synthesizer.setProperty('volume', vcvol)
 				synthesizer.setProperty('rate', vcrate)
-				TextToSpeechSys(tts_text, speech_wav, vcpitch)
+				TextToSpeechSys(NormalizeText(tts_text), speech_wav, vcpitch)
 				synthesizer.setProperty('voice', voices[voice_key].id)
 				synthesizer.setProperty('volume', voice_vol)
 				synthesizer.setProperty('rate', voice_rate)
 			else:
 				spkr_embs = LoadSpeaker(vckey)
 				TextToSpeechAI(tts_text, speech_wav, spkr_embs, vcvol, vcrate, vcpitch, vckey)
-			print('TTS_OUTPUT:'+speech_wav, flush=True)
+				PrintSleep('TTS_OUTPUT:'+speech_wav)
 		except:
-			print('TTS_OUTPUT:ERROR', flush=True)
-		time.sleep(0.1)
+			PrintSleep("TTS_OUTPUT:ERROR")
 		continue
 	elif msg == "read_text":
 		if not tts_ready:
-			print('PLAY_SPEECH:NO_VOICES', flush=True)
-			time.sleep(0.1)
+			PrintSleep('PLAY_SPEECH:NO_VOICES')
 			continue
 		print("SPEAK_TEXT:")
-		tts_text = NormalizeText(input().replace("[AI_UI_BR]", "\n"))
+		tts_text = input().replace("[AI_UI_BR]", "\n")
 		try:
 			if tts_mode == 0:
-				TextToSpeechSys(tts_text, read_wav, voice_ps)
+				TextToSpeechSys(NormalizeText(tts_text), read_wav, voice_ps)
 			else:
 				TextToSpeechAI(tts_text, read_wav, speaker_embeddings, voice_vol, voice_rate, voice_ps)
-			print('PLAY_SPEECH:'+read_wav, flush=True)
+			PrintSleep('PLAY_SPEECH:'+read_wav)
 		except:
-			print('PLAY_SPEECH:ERROR', flush=True)
-		time.sleep(0.1)
+			PrintSleep('PLAY_SPEECH:ERROR')
 		continue
 	elif msg == "clone_voice":
 		print("CLONE_CONFIG:")
-		clone_model = input()
+		clone_model = int(input())
 		speaker_name = input().strip()
 		speaker_wav = input().strip()
 		transcript = input().strip()
 		CleanVRAM()
-		print('CLONE_OUTPUT:'+CloneVoice(clone_model, speaker_name, speaker_wav, transcript))
-		time.sleep(0.1)
+		PrintSleep('CLONE_OUTPUT:'+CloneVoice(clone_model, speaker_name, speaker_wav, transcript))
 		CleanVRAM()
 		ReserveVRAM()
 		continue
@@ -1869,10 +1929,9 @@ while (True):
 		print("AVATAR_IMG:")
 		avatar_img = input()
 		if LoadAvatar():
-			print("GOT_AVATAR:true", flush=True)
+			PrintSleep("GOT_AVATAR:true")
 		else:
-			print("GOT_AVATAR:false", flush=True)
-		time.sleep(0.1)
+			PrintSleep("GOT_AVATAR:false")
 		continue
 	elif msg == "update_tmode":
 		print("TALK_MODE:")
@@ -1885,8 +1944,7 @@ while (True):
 		continue
 	elif msg == "redo_last":
 		if redo_count == 0:
-			print("BOT_NOANIM:Unable to redo last response.", flush=True)
-			time.sleep(0.1)
+			PrintSleep("BOT_NOANIM:Unable to redo last response.")
 			continue
 		if redo_count < len(messages):
 			messages = messages[:-redo_count]
@@ -1958,8 +2016,7 @@ while (True):
 			cmb_response = StripStart(cmb_response.strip(" \n"), bot_name_c).lstrip(' ')
 		
 		if cmb_response == '':
-			print("BOT_NOANIM:", flush=True)
-			time.sleep(0.1)
+			PrintSleep("BOT_NOANIM:")
 			break
 		
 		tc_response = ''
@@ -2006,9 +2063,9 @@ while (True):
 					tc_arg_key = "parameters"
 				
 				if tool_call != None:
-					tc_result = tool_func(tc_data["name"], tc_data[tc_arg_key], { 'GenImageIPA': GenImageIPA })
+					tc_result = tool_func(tc_data["name"], tc_data[tc_arg_key], { 'GenImageIPA': GenImageIPA, 'GenImage': GenImage })
 				elif "name" in tc_data:
-					tc_result = tool_func(tc_data["name"], {}, { 'GenImageIPA': GenImageIPA })
+					tc_result = tool_func(tc_data["name"], {}, { 'GenImageIPA': GenImageIPA, 'GenImage': GenImage })
 					tool_call = { "name": tc_data["name"], "arguments": {} }
 				else:
 					tc_error = True
@@ -2044,9 +2101,9 @@ while (True):
 					
 					tr_data = '{"name": "'+tc_data["name"]+'", "content": "'+tc_result+'"}'
 					
-					if tool_mode == "roleplay" and (tc_data["name"] == "show_image" or tc_data["name"] == "set_bio" or tc_data["name"] == "set_scene") and not tc_error:
+					if (tc_data["name"] == "gen_image" or (tool_mode == "roleplay" and tc_data["name"] in ["show_image", "set_bio", "set_scene"])) and not tc_error:
 					
-						prompt_key = "prompt" if tc_data["name"] == "show_image" else "summary"
+						prompt_key = "prompt" if tc_data["name"] == "show_image" or tc_data["name"] == "gen_image" else "summary"
 						if tc_result != '' and tc_arg_key in tc_data and prompt_key in tc_data[tc_arg_key]:
 							tc_resp += "<aiui_image>"+tc_result+"AIUI_IMG_TXT="+tc_data[tc_arg_key][prompt_key]+"</aiui_image>\n"
 					else:
@@ -2142,26 +2199,23 @@ while (True):
 					cmb_response = cmb_response.replace(xml_open_tag+inner_txt+xml_close_tag, "AIUI_IMG_SRC="+inner_txt+"AIUI_IMG_END", 1)
 
 		if do_talk and tts_ready and tts_response != '':
-			tts_response = NormalizeText(tts_response)
 			try:
 				if tts_mode == 0:
-					TextToSpeechSys(tts_response, chat_wav, voice_ps)
+					TextToSpeechSys(NormalizeText(tts_response), chat_wav, voice_ps)
 				else:
 					TextToSpeechAI(tts_response, chat_wav, speaker_embeddings, voice_vol, voice_rate, voice_ps)
 				
 				if do_anim: anim_done = AnimAvatar()
 				if not (do_anim and anim_done):
-					print('PLAY_SPEECH:'+chat_wav, flush=True)
-					time.sleep(0.1)
+					PrintSleep('PLAY_SPEECH:'+chat_wav)
 			except:
 				anim_done = False
 
 		if do_anim and anim_done:
-			print("BOT_OUTPUT:"+cmb_response.replace("\n", "[AI_UI_BR]"), flush=True)
+			PrintSleep("BOT_OUTPUT:"+cmb_response.replace("\n", "[AI_UI_BR]"))
 		else:
-			print("BOT_NOANIM:"+cmb_response.replace("\n", "[AI_UI_BR]"), flush=True)
+			PrintSleep("BOT_NOANIM:"+cmb_response.replace("\n", "[AI_UI_BR]"))
 
-		time.sleep(0.1)
 		r += 1
 		break #NOTE: disabled multiple bot responses for now
 	

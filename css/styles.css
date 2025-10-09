@@ -9,20 +9,25 @@ body {
 	margin: 0;
 }
 
-html ::-webkit-scrollbar {
+::-webkit-scrollbar {
 	width: 15px;
 	background-color: #383739;
 	-webkit-border-radius: 0px;
 }
 
-html ::-webkit-scrollbar-thumb:vertical {
+::-webkit-scrollbar-thumb {
 	background-color: #7d7e80;
 	-webkit-border-radius: 0px;
 }
 
-html ::-webkit-scrollbar-thumb:vertical:active {
-	background-color: #a1a0a3;
+::-webkit-scrollbar-thumb:active {
+	background-color: #a1a0a3 !important;
 	-webkit-border-radius: 0px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background-color: #918f94;
+	cursor: grabbing;
 }
 
 textarea:focus, input:focus, button:focus {
@@ -311,8 +316,13 @@ pre:has(> code) {
 
 #copy_txt_btn, #read_txt_btn,
 #copy_img_btn, #img_dir_btn,
-#tts_dir_btn, #clone_voice_btn {
+#tts_dir_btn, #aia_dir_btn {
 	width: 170px;
+	margin: 20px 30px 0px 30px;
+}
+
+#clone_voice_btn {
+	width: 140px;
 	margin: 20px 30px 0px 30px;
 }
 

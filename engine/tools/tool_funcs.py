@@ -1,7 +1,28 @@
 import time
 from datetime import datetime
 
+AIUI_FUNCS = None
+IMG_FILE = ''
+
 # CUSTOM TOOL FUNCTIONS
+
+"""
+Some tool functions are already implemented below to demonstrate how they are created.
+You can replace these functions with your own or add to the existing tool functions.
+"""
+
+def gen_image(prompt: str, neg_prompt: str="NONE", infer_steps: int=50, guidance: float=7.5):
+	"""
+	Generates an image from a prompt using AI and displays it to the user.
+    
+	Args:
+		prompt: The image prompt, usually a brief description of the image.
+		neg_prompt: The negative prompt, useful for reducing visual issues. Optional.
+		infer_steps: The number of inference steps. Optional (default=50, max=100)
+		guidance: The prompt guidance scale. Optional (default=7.5)
+	"""
+	global IMG_FILE
+	IMG_FILE = AIUI_FUNCS['GenImage'](prompt, neg_prompt, max(0, min(100, infer_steps)), abs(guidance))
 
 def utc_date() -> str:
 	"""Get the current UTC date as a string."""
@@ -26,8 +47,13 @@ def local_timezone() -> str:
 # FUNCTIONS FOR AIUI ENGINE
 
 def CallToolFunc(func_name, func_args, aiui_funcs):
+	global AIUI_FUNCS
 	try:
-		if func_name == "utc_date":
+		AIUI_FUNCS = aiui_funcs
+		if func_name == "gen_image":
+			gen_image(**func_args)
+			return IMG_FILE
+		elif func_name == "utc_date":
 			return utc_date()
 		elif func_name == "utc_time":
 			return utc_time()
@@ -43,4 +69,4 @@ def CallToolFunc(func_name, func_args, aiui_funcs):
 		return f"ERROR: an exception occured ({e})"
 
 def GetToolFuncs():
-	return [utc_date, utc_time, local_date, local_time, local_timezone]
+	return [gen_image, utc_date, utc_time, local_date, local_time, local_timezone]
