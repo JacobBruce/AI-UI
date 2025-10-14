@@ -313,7 +313,7 @@ for arg in model_args:
 
 def PrintSleep(txt_str, sleep_time=0.1, flush=True):
 	print(txt_str, flush=flush)
-	time.sleep(0.1)
+	time.sleep(sleep_time)
 
 def ReserveVRAM():
 	global reserved_vram
