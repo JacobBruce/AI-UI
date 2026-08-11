@@ -2,7 +2,7 @@
 
 A user-friendly interface for interacting with AI. Includes a voiced chat bot feature with an animated and customizable avatar. Built with Electron.
 
-![AI UI Screenshot](./img/screenshot.jpg)
+![AI UI Screenshot](./resources/app/img/screenshot.jpg)
 
 ## Install Guide
 
