@@ -1,8 +1,11 @@
 import sys
-sys.path.append('Wav2Lip')
+import os
+_W2L_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _W2L_ROOT not in sys.path:
+	sys.path.insert(0, _W2L_ROOT)
 from os import listdir, path
 import numpy as np
-import scipy, cv2, os, argparse, audio
+import scipy, cv2, argparse, audio
 import json, random, string, shutil
 from tqdm import tqdm
 from glob import glob

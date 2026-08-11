@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AI UI</title>
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';" />
+	<link id="theme_css" rel="stylesheet" href="./css/themes/modern.css">
+	<script>
+		(function () {
+			try {
+				var t = localStorage.getItem('aiui_theme');
+				if (t === 'modern' || t === 'classic') {
+					document.getElementById('theme_css').href = './css/themes/' + t + '.css';
+				}
+			} catch (e) {}
+		})();
+	</script>
+	<link rel="stylesheet" href="./css/highlight.css">
+	<link rel="stylesheet" href="./css/katex.min.css">
+</head>
+<body>
+	<div id="container">
+
+		<div id="loading_box" class="center hidden"><div id="loading_msg">Processing avatar image... please wait.</div></div>
+		
+		<div id="pack_dialog" class="text_dialog hidden">
+			<div class="pack_dialog_panel">
+				<h3 id="pack_dialog_title">Pack Settings</h3>
+				<div class="center pack_dialog_tabs">
+					<button type="button" id="pack_tab_settings_btn" class="pack_tab_btn">Settings</button>
+					<button type="button" id="pack_tab_tools_btn" class="pack_tab_btn">Tools</button>
+				</div>
+				<div id="pack_dialog_settings"></div>
+				<div id="pack_dialog_tools" class="hidden">
+					<div id="pack_tools_list"></div>
+					<p id="pack_tools_note" class="pack_dialog_note"></p>
+				</div>
+				<div class="center pack_dialog_actions">
+					<button type="button" id="pack_dialog_save" class="btn cfg_btn">SAVE</button>
+					<button type="button" id="pack_dialog_cancel" class="btn cfg_btn">CLOSE</button>
+				</div>
+			</div>
+		</div>
+
+		<div id="session_dialog" class="text_dialog hidden" role="dialog" aria-modal="true" aria-labelledby="session_dialog_title">
+			<div class="session_dialog_panel pack_dialog_panel">
+				<h3 id="session_dialog_title">Load Session</h3>
+				<div id="session_pick_list"></div>
+				<p id="session_pick_note" class="pack_dialog_note"></p>
+				<div class="center pack_dialog_actions">
+					<button type="button" id="session_dialog_open" class="btn cfg_btn" disabled>OPEN</button>
+					<button type="button" id="session_dialog_cancel" class="btn cfg_btn">CANCEL</button>
+				</div>
+			</div>
+		</div>
+
+		<div id="tool_perm_dialog" class="text_dialog hidden" role="dialog" aria-modal="true" aria-labelledby="tool_perm_title">
+			<div class="tool_perm_panel pack_dialog_panel">
+				<h3 id="tool_perm_title">Tool Permission</h3>
+				<p id="tool_perm_summary" class="tool_perm_summary"></p>
+				<pre id="tool_perm_code" class="tool_perm_code code_box"><code class="hljs"></code></pre>
+				<div class="center pack_dialog_actions tool_perm_actions">
+					<button type="button" id="tool_perm_deny" class="btn cfg_btn">DENY</button>
+					<button type="button" id="tool_perm_allow" class="btn cfg_btn">ALLOW</button>
+					<button type="button" id="tool_perm_auto" class="btn cfg_btn">AUTO-ALLOW</button>
+					<button type="button" id="tool_perm_stop" class="btn cfg_btn">STOP</button>
+				</div>
+			</div>
+		</div>
+		
+		<div id="attach_dialog" class="text_dialog hidden" aria-labelledby="attach_dialog_head">
+			<div id="input_box" class="hidden">
+				<div><label id="input_label">URL:</label><input type="text" id="user_input" name="user_input"><button id="input_btn" class="btn" type="button">OK</button></div>
+			</div>
+			<div class="attach_dialog_panel modal_dialog_panel">
+				<div id="attach_dialog_head" class="dialog_head">ATTACHED FILES</div>
+				<div class="dialog_body">
+					<div id="attach_box" ondrop="FileDragDrop(event)" ondragover="FileDragOver(event)"><small id="attach_ph">drag and drop files here</small></div>
+					<input type="file" id="attach_files" name="attach_files" class="hidden" multiple>
+				</div>
+				<div class="dialog_foot">
+					<label id="ams_label">Vision:</label>
+					<select id="am_select" class="cfg_drp">
+						<option value="auto" selected>Auto</option>
+						<option value="janus">Janus-Pro</option>
+						<option value="qwen_vl">Qwen-VL (legacy)</option>
+					</select>
+					<button id="attach_box_btn" class="btn dialog_btn" type="button" onclick="ToggleAttachBox()">CLOSE</button>
+					<button class="btn dialog_btn" type="button" onclick="ClearAttachments()">CLEAR</button>
+					<button class="btn dialog_btn" type="button" onclick="AttachLink()">ADD LINK</button>
+					<button class="btn dialog_btn" type="button" onclick="AttachFiles()">ADD FILE(S)</button>
+				</div>
+			</div>
+		</div>
+		
+		<div id="edit_dialog" class="text_dialog hidden">
+			<div class="edit_dialog_panel modal_dialog_panel">
+				<div class="dialog_head">EDIT SYSTEM PROMPT</div>
+				<div class="dialog_body">
+					<textarea id="prompt_txta" class="txt_area"></textarea>
+				</div>
+				<div class="dialog_foot">
+					<button class="btn dialog_btn dialog_btn_left" type="button" onclick="TogglePromptFiles()">RULES / SKILLS</button>
+					<button class="btn dialog_btn" type="button" onclick="ToggleEditPrompt()">CANCEL</button>
+					<button class="btn dialog_btn" type="button" onclick="ApplyNewPrompt()">APPLY</button>
+				</div>
+			</div>
+		</div>
+		
+		<div id="prompt_files_dialog" class="text_dialog hidden">
+			<div class="prompt_files_dialog_panel modal_dialog_panel">
+				<div class="dialog_head">RULES &amp; SKILLS</div>
+				<div class="dialog_body pf_dialog_body">
+					<div id="prompt_files_box" class="prompt_files_box">
+						<div class="pf_col">
+							<div class="pf_title">Rules</div>
+							<div id="rules_toggles" class="pf_list"></div>
+						</div>
+						<div class="pf_col">
+							<div class="pf_title">Skills</div>
+							<div id="skills_toggles" class="pf_list"></div>
+						</div>
+					</div>
+					<p class="pf_hint">Files live in <code>~/.aiui</code> under your user home (and <code>&lt;project&gt;/.aiui</code> when a project is open via File &rarr; Open Project). Skills may be flat <code>skills/*.md</code> or Cursor-style <code>skills/&lt;name&gt;/SKILL.md</code>. Reload rescans disk and rebuilds the system prompt from the selected agent, enabled rules, and skill catalog.</p>
+				</div>
+				<div class="dialog_foot">
+					<button class="btn dialog_btn" type="button" onclick="TogglePromptFiles()">CLOSE</button>
+					<button class="btn dialog_btn" type="button" onclick="ReloadPromptFromFiles()">RELOAD FROM FILES</button>
+				</div>
+			</div>
+		</div>
+		
+		<input type="text" id="held_keys" class="hidden">
+
+		<div id="main_menu">
+			<button class="menu_btn menu_sel" onclick="ChatPage(this)">CHAT BOT</button><button class="menu_btn" onclick="TextPage(this)">TEXT GEN</button><button class="menu_btn" onclick="SpeechPage(this)">SPEECH GEN</button><button class="menu_btn" onclick="ImagePage(this)">IMAGE GEN</button><button class="menu_btn" onclick="ConsolePage(this)">CONSOLE</button><button class="menu_btn" onclick="ConfigPage(this)">SETTINGS</button><button class="menu_btn" onclick="HelpPage(this)">HELP</button><button class="menu_btn" onclick="AboutPage(this)">ABOUT</button>
+			<div id="workspace_label" class="workspace_status">
+				<button type="button" id="workspace_status_btn" class="workspace_status_btn" aria-label="Workspace status" title="Workspace status" onclick="ToggleWorkspaceStatusTip(event)">
+					<span id="workspace_status_icon" class="workspace_status_icon" aria-hidden="true"></span>
+					<span id="workspace_status_text" class="workspace_status_text">Initializing AI Engine...</span>
+				</button>
+				<div id="workspace_status_tip" class="workspace_status_tip hidden" role="tooltip"></div>
+			</div>
+		</div>
+		
+		<div id="content">
+
+			<div id="chat_app">		
+				<div id="chat_box">
+					<div id="chat_log">
+						<div id="prompt_bar" class="hidden">
+							<div id="prompt">
+								<p id="init_prompt" class="prompt_txt"></p>
+								<button id="edit_btn" onclick="ToggleEditPrompt()"><img class="edit_img" src="./img/edit_w.png" width="15" /></button>
+							</div>
+						</div>
+						<div id="compact_run_status" class="compact_run_status hidden" aria-live="polite">
+							<div class="compact_run_chip">
+								<span class="tool_run_pulse" aria-hidden="true"></span>
+								<span>Compacting context...</span>
+							</div>
+						</div>
+					</div>
+					<div id="thinking"></div>
+					<button id="chat_scroll_btn" class="hidden" type="button" title="Scroll to bottom" aria-label="Scroll to bottom" onclick="ScrollChatBottom()">
+						<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+							<path fill="currentColor" d="M12 16.5L5.5 10l1.4-1.4 5.1 5.1 5.1-5.1L18.5 10 12 16.5z"/>
+						</svg>
+					</button>
+					<div id="exp_box" class="hidden"><textarea id="area_inp" class="txt_area" name="msg_txta" placeholder="Type your message. Use [AIUI_END] to split the text into multiple messages."></textarea></div>
+					<div id="send_box">
+						<div id="text_box">
+							<div id="agent_wrap" class="agent_wrap">
+								<span class="agent_lbl" aria-hidden="true">Agent</span>
+								<select id="agent_select" class="agent_sel" title="Agent: None" aria-label="Agent" disabled>
+									<option value="">None</option>
+								</select>
+							</div>
+							<input type="text" id="text_inp" name="msg_txt" placeholder="Type your message" autofocus>
+						</div>
+						<button id="ctx_usage_btn" class="hidden" type="button" title="Context usage" aria-label="Context usage" onclick="ToggleCtxUsageTip(event)">
+							<svg id="ctx_usage_svg" viewBox="0 0 64 64" width="20" height="20" aria-hidden="true">
+								<circle class="ctx_usage_track" cx="32" cy="32" r="26" fill="none" stroke="#b8c1f9" stroke-width="4"></circle>
+								<circle id="ctx_usage_arc" class="ctx_usage_arc" cx="32" cy="32" r="26" fill="none" stroke="#b8c1f9" stroke-width="4"
+									stroke-linecap="butt" transform="rotate(-90 32 32)" stroke-dasharray="163.36281798666926" stroke-dashoffset="163.36281798666926"></circle>
+							</svg>
+						</button>
+						<div id="ctx_usage_tip" class="hidden" role="tooltip">
+							<div id="ctx_usage_tip_body"></div>
+							<button id="ctx_compact_btn" class="btn" type="button" onclick="CompactNow(event)">MANUAL COMPACT</button>
+						</div>
+						<button id="mic_btn" onclick="ToggleRecordBox()" disabled><img src="./img/microphone.png" width="20" /></button>
+						<button id="attach_btn" onclick="ToggleAttachBox()" disabled><img src="./img/attach.png" width="20" /></button>
+						<button id="exp_btn" onclick="ToggleMsgBox()"><img src="./img/expand.png" width="20" /></button>
+						<div id="butt_box">
+							<button id="send_btn" class="btn chat_btn" onclick="SendMsg()" disabled>SEND</button><button id="redo_btn" class="btn chat_btn" onclick="RedoLast()" disabled>REDO</button><button id="cont_btn" class="btn chat_btn" onclick="ContChat()" disabled>CONT</button>
+						</div>
+					</div>
+					<div id="input_dialog" class="text_dialog hidden">
+						<div id="in_dialog_head" class="dialog_head">USER INPUT</div>
+						<div class="dialog_body">
+							<textarea id="input_txta" class="txt_area"></textarea>
+						</div>
+						<div class="dialog_foot">
+							<button id="in_accept_btn" class="btn dialog_btn" disabled>ACCEPT</button>
+							<button class="btn dialog_btn" onclick="ToggleInputDialog()">CANCEL</button>
+						</div>
+					</div>
+				</div>
+				
+				<div id="chat_side">
+					<div id="avatar_box">
+						<img id="avatar_img" width="256" height="256" src="" />
+						<video id="avatar_vid" class="hidden" width="256" height="256">
+							<source id="avatar_source" src="" type="video/mp4">
+						</video>
+						<video id="other_vid" class="hidden" width="256" height="256">
+							<source id="other_source" src="" type="video/mp4">
+						</video>
+						<button id="stop_play_btn" class="hidden" type="button" onclick="TogglePlayback()">Stop Playback</button>
+						<button id="tmode_btn" class="config_btn" onclick="ChangeTalkMode()" disabled><img id="tmode_img" width="42" height="42" src="./img/talk_0.png" /></button>
+						<button id="avatar_btn" class="config_btn" onclick="ChangeAvatar()" disabled><img width="42" height="42" src="./img/folder_b.png" /></button>
+					</div>
+					<div id="chat_cbox" class="center config_box">
+						<div id="basic_config">
+							<span class="cfg_lbl">Animation Engine</span>
+							<select id="anim_mode" class="cfg_drp">
+								<option value="-1" selected>None</option>
+								<option value="0">MakeItTalk</option>
+								<option value="1">Wav2Lip</option>
+								<option value="2">SadTalker</option>
+								<option value="3">IMTalker</option>
+							</select>
+							<span class="cfg_lbl">Speech Engine</span>
+							<select id="tts_mode" class="cfg_drp">
+								<option value="0" selected>System TTS</option>
+								<option value="1">AI Model</option>
+							</select>
+							<span class="cfg_lbl">Speech Voice</span>
+							<select id="voices" class="cfg_drp"></select>
+							<span class="cfg_lbl">Speech Volume</span>
+							<input type="range" id="speech_vol" class="cfg_sld" min="0.05" max="1.0" step="0.05" value="1.0">
+							<span class="cfg_lbl">Speech Rate</span>
+							<input type="range" id="speech_rate" class="cfg_sld" min="1" max="400" value="200">
+							<span class="cfg_lbl">Speech Pitch</span>
+							<input type="range" id="speech_pitch" class="cfg_sld" min="-11" max="10" value="0">
+							<br><br>
+						</div>
+						<div id="adv_config">
+							<span class="cfg_lbl">Template Format <img class="help_icon" width="16" height="16" title="Sets the chat log template. AI UI Template includes JSON tool-call instructions plus schemas. AI UI (no tool prompt) still lists tool schemas but omits call-format text so your rules can teach the format. Model Template uses the model's native chat template which may or may not support tools. None uses plain role: text lines. Multimodal models always use the Model Template." /></span>
+							<select id="template_select" class="cfg_drp">
+								<option value="none" selected>None</option>
+								<option value="model">Model Template</option>
+								<option value="aiui">AI UI Template</option>
+								<option value="aiui_notoolprompt">AI UI Template (no tool prompt)</option>
+							</select>
+							<span class="cfg_lbl">Enable Thinking <img class="help_icon" width="16" height="16" title="Local: controls whether thinking is enabled for models with chat templates that support it. Anthropic: uses adaptive thinking when enabled. OpenAI: False maps to reasoning_effort none. Auto omits when possible." /></span>
+							<select id="enable_thinking" class="cfg_drp">
+								<option value="auto" selected>Auto</option>
+								<option value="true">True</option>
+								<option value="false">False</option>
+							</select>
+							<span class="cfg_lbl">Reasoning Effort <img class="help_icon" width="16" height="16" title="Local: controls the level of reasoning effort for models with chat templates that support it. OpenAI: top-level reasoning_effort. Anthropic: output_config.effort. Auto omits the parameter." /></span>
+							<select id="reasoning_effort" class="cfg_drp">
+								<option value="auto" selected>Auto</option>
+								<option value="low">Low</option>
+								<option value="medium">Medium</option>
+								<option value="high">High</option>
+								<option value="xhigh">Extra High</option>
+								<option value="max">Max</option>
+							</select>
+							<span class="cfg_lbl">Prompt Persistence <img class="help_icon" width="16" height="16" title="Controls whether the system prompt will be limited to the message memory or permanently included at the start of the actual prompt which is fed to the AI." /></span>
+							<select id="pp_select" class="cfg_drp">
+								<option value="0" selected>Memory Limited</option>
+								<option value="1">Permanent</option>
+								<option value="2">No Prompt</option>
+							</select>
+							<span class="cfg_lbl">Max Message Memory <img class="help_icon" width="16" height="16" title="Used when Compact at is 0 (compaction off). Number of recent messages kept in the model context. Higher values increase memory and latency." /></span>
+							<input type="number" id="max_msg_mem" class="cfg_num" min="2" max="10000" value="10">
+							<span class="cfg_lbl">Context Token Budget <img class="help_icon" width="16" height="16" title="When prompt tokens reach this budget (or Max Response Length no longer fits under it), the context is compacted into a summary (plus recent tail). Set to 0 to disable compaction and use Max Message Memory instead. Optional override: ~/.aiui/compact_prompt.txt" /></span>
+							<input type="number" id="compact_at" class="cfg_num" min="0" max="2000000" step="1000" value="0">
+							<span class="cfg_lbl">Compact Recent Tail <img class="help_icon" width="16" height="16" title="After compaction, keep roughly this many tokens of the latest user turn and following replies verbatim (in addition to the summary)." /></span>
+							<input type="number" id="compact_tail_tokens" class="cfg_num" min="256" max="100000" step="256" value="8000">
+							<span class="cfg_lbl">Compact Summary Max <img class="help_icon" width="16" height="16" title="Max tokens for the summarization side-call when compaction runs. Independent of Max Response Length, which only applies to normal chat replies." /></span>
+							<input type="number" id="compact_summary_max" class="cfg_num" min="256" max="32000" step="256" value="8192">
+							<span class="cfg_lbl">Max Response Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate in each response. On remote APIs with thinking enabled, reasoning counts toward this budget too. A token is like a word but spaces and other symbols may also count." /></span>
+							<input type="number" id="max_res_len" class="cfg_num" min="1" max="100000" value="32000">
+							<span class="cfg_lbl">Min Response Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate in each response. A token is like a word but spaces and other symbols may be considered a token." /></span>
+							<input type="number" id="min_res_len" class="cfg_num" min="1" max="10000" value="1">
+							<h4 class="cfg_title">ADVANCED SETTINGS</h4>
+							<span class="cfg_lbl">Enable Sampling <img class="help_icon" width="16" height="16" title="Whether or not to use sampling. Uses greedy decoding if sampling is disabled." /></span>
+							<select id="ds_select" class="cfg_drp">
+								<option value="1" selected>True</option>
+								<option value="0">False</option>
+							</select>
+							<span class="cfg_lbl">Number of Beams <img class="help_icon" width="16" height="16" title="The number of beams for beam search. A value of 1 means no beam search." /></span>
+							<input type="number" id="num_beams" class="cfg_num" min="1" max="100" step="1" value="1">
+							<span class="cfg_lbl">Beam Groups <img class="help_icon" width="16" height="16" title="The number of groups to divide beams into in order to ensure diversity among different groups of beams." /></span>
+							<input type="number" id="beam_groups" class="cfg_num" min="1" max="100" step="1" value="1">
+							<span class="cfg_lbl">Base Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable. The engine may briefly increase this value in some situations (e.g. using the REDO button)." /></span>
+							<input type="number" id="base_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
+							<span class="cfg_lbl">Top-K <img class="help_icon" width="16" height="16" title="Only samples from the most probable K vocabulary tokens. Set to 0 to disable Top-K sampling." /></span>
+							<input type="number" id="top_k" class="cfg_num" min="0" max="1000" value="50">
+							<span class="cfg_lbl">Top-p <img class="help_icon" width="16" height="16" title="Only the smallest set of most probable tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+							<input type="number" id="top_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+							<span class="cfg_lbl">Typical-p <img class="help_icon" width="16" height="16" title="Only the smallest set of the most locally typical tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+							<input type="number" id="typical_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+							<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
+							<input type="number" id="rep_penalty" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
+							<span class="cfg_lbl">Frequency Penalty <img class="help_icon" width="16" height="16" title="OpenAI-style frequency penalty (-2.0 to 2.0). Positive values discourage tokens in proportion to how often they already appeared. Applied on remote OpenAI-compatible APIs (HF router, OpenRouter, etc.). Not used for local HF generate (use Repetition Penalty). Default 0." /></span>
+							<input type="number" id="frequency_penalty" class="cfg_num" min="-2.0" max="2.0" step="0.01" value="0">
+							<span class="cfg_lbl">Presence Penalty <img class="help_icon" width="16" height="16" title="OpenAI-style presence penalty (-2.0 to 2.0). Positive values discourage tokens that have already appeared at least once. Applied on remote OpenAI-compatible APIs. Not used for local HF generate (use Repetition Penalty). Default 0." /></span>
+							<input type="number" id="presence_penalty" class="cfg_num" min="-2.0" max="2.0" step="0.01" value="0">
+							<br><br>
+						</div>
+						<div id="tool_config">
+							<span class="cfg_lbl">Tool Packs <img class="help_icon" width="16" height="16" title="Enable Native packs (Math, Web, Coding, Image) and MCP servers from ~/.aiui/mcp.json. Click a pack name for settings, Auto-allow, and per-tool toggles." /></span>
+							<div id="tool_packs_list"></div>
+							<div class="tool_pack_actions_bar">
+								<button type="button" id="mcp_edit_file_btn" class="btn cfg_btn">SHOW MCP.JSON</button>
+								<button type="button" id="mcp_refresh_btn" class="btn cfg_btn">REFRESH PACKS</button>
+							</div>
+							<p id="tools_info"><small>Native packs ship with AI UI. MCP servers are installed via <code>~/.aiui/mcp.json</code></small></p>
+						</div>
+						<button id="apply_btn" class="btn cfg_btn" onclick="ApplyConfig()" disabled>APPLY</button>
+						<button id="adv_btn" class="btn cfg_btn" onclick="ToggleConfig()">AI SETTINGS</button>
+					</div>
+				</div>
+			</div>
+
+			<div id="txtgen_app" class="hidden">
+				<div id="txtgen_box">
+					<div id="gen_result"></div>
+					<div class="generating"></div>
+					<div id="gen_exp_box" class="hidden"><textarea id="gen_area_inp" class="txt_area"></textarea></div>
+					<div class="gen_input_box">
+						<div id="gen_text_box">
+							<input type="text" id="gen_text_inp" placeholder="Opening text">
+						</div>
+						<button id="gen_exp_btn" onclick="ToggleGenBox()"><img src="./img/expand.png" width="20" /></button>
+						<div id="gen_butt_box">
+							<button id="gen_btn" class="btn" onclick="GenText()" disabled>GENERATE</button>
+						</div>
+					</div>
+				</div>
+				
+				<div id="txtgen_side">
+					<div id="txtgen_cbox" class="center config_box">
+						<div id="txtgen_config">
+							<h4 class="cfg_title">GENERATION SETTINGS</h4>
+							<span class="cfg_lbl">Max Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
+							<input type="number" id="gen_max_len" class="cfg_num" min="1" max="100000" value="1000">
+							<span class="cfg_lbl">Min Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate. A token is like a word but spaces and other symbols may be considered a token." /></span>
+							<input type="number" id="gen_min_len" class="cfg_num" min="1" max="10000" value="1">
+							<span class="cfg_lbl">Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable." /></span>
+							<input type="number" id="gen_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
+							<h4 class="cfg_title">ADVANCED SETTINGS</h4>
+							<span class="cfg_lbl">Enable Sampling <img class="help_icon" width="16" height="16" title="Whether or not to use sampling. Uses greedy decoding if sampling is disabled." /></span>
+							<select id="gds_select" class="cfg_drp">
+								<option value="1" selected>True</option>
+								<option value="0">False</option>
+							</select>
+							<span class="cfg_lbl">Number of Beams <img class="help_icon" width="16" height="16" title="The number of beams for beam search. A value of 1 means no beam search." /></span>
+							<input type="number" id="gen_num_beams" class="cfg_num" min="1" max="100" step="1" value="1">
+							<span class="cfg_lbl">Beam Groups <img class="help_icon" width="16" height="16" title="The number of groups to divide beams into in order to ensure diversity among different groups of beams." /></span>
+							<input type="number" id="gen_beam_groups" class="cfg_num" min="1" max="100" step="1" value="1">
+							<span class="cfg_lbl">Top-K <img class="help_icon" width="16" height="16" title="Only samples from the most probable K vocabulary tokens. Set to 0 to disable Top-K sampling." /></span>
+							<input type="number" id="gen_top_k" class="cfg_num" min="0" max="1000" value="50">
+							<span class="cfg_lbl">Top-p <img class="help_icon" width="16" height="16" title="Only the smallest set of most probable tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+							<input type="number" id="gen_top_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+							<span class="cfg_lbl">Typical-p <img class="help_icon" width="16" height="16" title="Only the smallest set of the most locally typical tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+							<input type="number" id="gen_typ_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
+							<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
+							<input type="number" id="gen_rep_p" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
+							<br><br>
+						</div>
+						<button id="copy_txt_btn" class="btn cfg_btn" onclick="CopyGenTxt()">COPY TO CLIPBOARD</button>
+						<button id="read_txt_btn" class="btn cfg_btn" onclick="ReadGenTxt()" disabled>TEXT TO SPEECH</button>
+					</div>
+				</div>
+			</div>
+
+			<div id="ttsgen_app" class="hidden">
+				<div id="ttsgen_box">
+					<div id="tts_result"></div>
+					<div class="generating"></div>
+					<div id="tts_exp_box" class="hidden"><textarea id="tts_area_inp" class="txt_area"></textarea></div>
+					<div class="gen_input_box">
+						<div id="tts_text_box">
+							<input type="text" id="tts_text_inp" placeholder="Text to read">
+						</div>
+						<button id="tts_exp_btn" onclick="ToggleTTSBox()"><img src="./img/expand.png" width="20" /></button>
+						<div id="tts_butt_box">
+							<button id="tts_btn" class="btn" onclick="GenSpeech()" disabled>GENERATE</button>
+						</div>
+					</div>
+				</div>
+				
+				<div id="ttsgen_side">
+					<div id="ttsgen_cbox" class="center config_box">
+						<div id="ttsgen_config">
+							<h4 class="cfg_title">SPEECH SETTINGS</h4>
+							<span class="cfg_lbl">Speech Engine</span>
+							<select id="ttsgen_mode" class="cfg_drp">
+								<option value="0" selected>System TTS</option>
+								<option value="1">AI Model</option>
+							</select>
+							<span class="cfg_lbl">Speech Voice</span>
+							<select id="tts_voices" class="cfg_drp"></select>
+							<span class="cfg_lbl">Speech Volume</span>
+							<input type="range" id="tts_speech_vol" class="cfg_sld" min="0.05" max="1.0" step="0.05" value="1.0">
+							<span class="cfg_lbl">Speech Rate</span>
+							<input type="range" id="tts_speech_rate" class="cfg_sld" min="1" max="400" value="200">
+							<span class="cfg_lbl">Speech Pitch</span>
+							<input type="range" id="tts_speech_pitch" class="cfg_sld" min="-11" max="10" value="0">
+							<h4 class="cfg_title">VOICE CLONING</h4>
+							<span class="cfg_lbl">Cloning Model <img class="help_icon" width="16" height="16" title="The model used for extracting speaker embeddings from an audio sample." /></span>
+							<select id="vclone_mode" class="cfg_drp">
+								<option value="0">SpeechBrain/SpeechT5 (16khz)</option>
+								<option value="1">ChatTTS (24khz)</option>
+								<option value="3">VoxCPM (16khz)</option>
+								<option value="4">NeuTTS Air (16khz)</option>
+								<option value="6">Audio8 TTS (44.1khz)</option>
+							</select>
+							<div id="ts_txt_row" class="hidden">
+								<span class="cfg_lbl">Transcript <img class="help_icon" width="16" height="16" title="Text transcript of the speech in the Voice Sample audio file." /></span>
+								<input type="text" id="transcript" class="cfg_txt">
+							</div>
+							<span class="cfg_lbl">Voice Sample <img class="help_icon" width="16" height="16" title="A .wav file containing around 10 seconds of speech by the voice to be cloned. Sample should have minimal background noise." /></span>
+							<div class="browse_row">
+								<input type="text" id="voice_sample" class="cfg_txt">
+								<button class="btn browse_btn" onclick="OpenSample('voice_sample')">BROWSE</button>
+							</div>
+							<span class="cfg_lbl">Voice Name <img class="help_icon" width="16" height="16" title="Choose a name for the cloned voice (e.g. British Male 1) so you can select it from the list of voices." /></span>
+							<input type="text" id="voice_name" class="cfg_txt">
+							<button id="clone_voice_btn" class="btn cfg_btn" onclick="CloneVoice()" disabled>CLONE VOICE</button>
+							<br><br>
+						</div>
+						<button id="aia_dir_btn" class="btn cfg_btn" onclick="OpenAIADir()">OPEN AUDIO FOLDER</button>
+						<button id="tts_dir_btn" class="btn cfg_btn" onclick="OpenTTSDir()">OPEN VOICE FOLDER</button>
+					</div>
+				</div>
+			</div>
+
+			<div id="imggen_app" class="hidden">
+				<div id="imggen_box">
+					<div id="img_result"></div>
+					<div class="generating"></div>
+					<div class="gen_input_box">
+						<div id="img_text_box">
+							<input type="text" id="img_text_inp" placeholder="Prompt text"><input type="text" id="img_text_neg" placeholder="Negative prompt (optional)">
+						</div>
+						<div id="img_butt_box">
+							<button id="img_btn" class="btn" onclick="GenImage()" disabled>GENERATE</button>
+						</div>
+					</div>
+				</div>
+				
+				<div id="imggen_side">
+					<div id="imggen_cbox" class="center config_box">
+						<div id="imggen_config">
+							<h4 class="cfg_title">GENERATION SETTINGS</h4>
+							<span class="cfg_lbl">Inference Steps <img class="help_icon" width="16" height="16" title="The number of denoising steps. More steps usually lead to higher quality images at the expense of slower image generation." /></span>
+							<input type="number" id="infer_steps" class="cfg_num" min="1" max="100" value="50">
+							<span class="cfg_lbl">Guidance Scale <img class="help_icon" width="16" height="16" title="A higher guidance scale encourages the AI to adhere to the prompt but can lead to lower image quality. Enabled by setting higher than 1." /></span>
+							<input type="number" id="guidance" class="cfg_num" min="0.0" max="10.0" step="0.1" value="7.5">
+							<span class="cfg_lbl">Safety Checker <img class="help_icon" width="16" height="16" title="The safety checker will censor NSFW images. This setting overrides im_safety_check if it exists in the Model Setup arguments." /></span>
+							<select id="safety_check" class="cfg_drp">
+								<option value="1" selected>True</option>
+								<option value="0">False</option>
+							</select>
+							<span class="cfg_lbl">Image Size <img class="help_icon" width="16" height="16" title="Set a custom image width and height or use the default image size (usually depends on the image model)." /></span>
+							<select id="is_select" class="cfg_drp">
+								<option value="auto" selected>Auto</option>
+								<option value="custom">Custom</option>
+							</select>
+							<div id="is_input_box" class="hidden">
+								<span class="cfg_lbl">Image Width</span>
+								<input type="number" id="img_width" class="cfg_num" min="2" max="10000" value="512">
+								<span class="cfg_lbl">Image Height</span>
+								<input type="number" id="img_height" class="cfg_num" min="2" max="10000" value="512">
+							</div>
+							<span class="cfg_lbl">Image Seed <img class="help_icon" width="16" height="16" title="The seed value used to generate the image. The same seed will always result in the same image. Leave empty to use random seeds." /></span>
+							<input type="text" id="img_seed" class="cfg_txt">
+							<h4 class="cfg_title">ADVANCED SETTINGS</h4>
+							<span class="cfg_lbl">VAE Model <img class="help_icon" width="16" height="16" title="The path to a Variational Auto-Encoder (VAE) model file to be used. This setting overrides im_vae_file if it exists in the Model Setup arguments." /></span>
+							<div class="browse_row">
+								<input type="text" id="vae_file" class="cfg_txt">
+								<button class="btn browse_btn" onclick="OpenFile('vae_file')">BROWSE</button>
+							</div>
+							<span class="cfg_lbl">LoRA Model <img class="help_icon" width="16" height="16" title="The file name (not a full path) of a LoRA model to be used. This setting overrides im_lora_file if it exists in the Model Setup arguments." /></span>
+							<div class="browse_row">
+								<input type="text" id="lora_file" class="cfg_txt">
+								<button class="btn browse_btn" onclick="OpenFile('lora_file',true)">BROWSE</button>
+							</div>
+							<span class="cfg_lbl">LoRA Folder <img class="help_icon" width="16" height="16" title="The directory/repository containing the above LoRA model file. This setting overrides im_lora_dir if it exists in the Model Setup arguments." /></span>
+							<div class="browse_row">
+								<input type="text" id="lora_dir" class="cfg_txt">
+								<button class="btn browse_btn" onclick="OpenFolder('lora_dir')">BROWSE</button>
+							</div>
+							<span class="cfg_lbl">LoRA Scale <img class="help_icon" width="16" height="16" title="Changes how much the LoRA model will influence the output. A higher value means the LoRA model has more influence. Has a default value of 1.0" /></span>
+							<input type="number" id="lora_scale" class="cfg_num" min="0.05" max="1.95" step="0.05" value="1.0">
+							<br><br>
+						</div>
+						<button id="copy_img_btn" class="btn cfg_btn" onclick="CopyGenImg()">COPY TO CLIPBOARD</button>
+						<button id="img_dir_btn" class="btn cfg_btn" onclick="OpenImgDir()">OPEN IMAGE FOLDER</button>
+					</div>
+				</div>
+			</div>
+
+			<div id="console_tab" class="hidden">
+				<div id="console_box">
+					<div id="log_box">
+						<pre class="console_log">Application started</pre>
+					</div>
+				</div>
+				<div id="cmd_input_box">
+					<div id="cmd_text_box">
+						<input type="text" id="cmd_text_inp" placeholder="Run a command in the Python environment">
+					</div>
+					<div id="cmd_butt_box">
+						<button id="cmd_btn" class="btn" onclick="RunCmd()">RUN CMD</button>
+					</div>
+				</div>
+			</div>
+
+			<div id="config_tab" class="hidden">
+
+				<div class="center subtab_nav">
+					<button type="button" id="main_conf_btn" class="subtab_btn subtab_sel" onclick="ShowMainConfig()">Main Settings</button>
+					<button type="button" id="other_conf_btn" class="subtab_btn" onclick="ShowOtherConfig()">Other Settings</button>
+					<button type="button" id="remote_conf_btn" class="subtab_btn" onclick="ShowRemoteConfig()">Remote Settings</button>
+				</div>
+				
+				<div class="center" id="settings">
+					<div id="main_settings">
+						<div class="settings_col">
+							<span class="cfg_lbl">Engine Folder <img class="help_icon" width="16" height="16" title="The directory containing the Python scripts for the AI engine, it is included with the app (should contain a file called aiui_engine.py)" /></span>
+							<div class="browse_row">
+								<span class="browse_spacer" aria-hidden="true"></span>
+								<input type="text" id="script_dir" class="cfg_txt" value="">
+								<button class="btn browse_btn" onclick="OpenFolder('script_dir')">BROWSE</button>
+							</div>
+							<span class="cfg_lbl">Python Binary <img class="help_icon" width="16" height="16" title="The location of your Python binary/executable file (on Windows it should be a file called python.exe)" /></span>
+							<div class="browse_row">
+								<span class="browse_spacer" aria-hidden="true"></span>
+								<input type="text" id="python_bin" class="cfg_txt" value="">
+								<button class="btn browse_btn" onclick="OpenFile('python_bin')">BROWSE</button>
+							</div>
+							<span class="cfg_lbl">Text Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. Qwen/Qwen3-8B) or the directory containing the text generation model (usually contains .safetensors files)" /></span>
+							<div class="browse_row">
+								<span class="browse_spacer" aria-hidden="true"></span>
+								<input type="text" id="model_dir" class="cfg_txt" value="">
+								<button class="btn browse_btn" onclick="OpenFolder('model_dir')">BROWSE</button>
+							</div>
+							<span class="cfg_lbl">Image Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. dreamlike-art/dreamlike-photoreal-2.0) or the file/folder with the image generation model (allows image generation)" /></span>
+							<div class="browse_row">
+								<span class="browse_spacer" aria-hidden="true"></span>
+								<input type="text" id="im_model" class="cfg_txt" value="">
+								<button class="btn browse_btn" onclick="OpenFileFolder('im_model')">BROWSE</button>
+							</div>
+							<span class="cfg_lbl">TTS Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. microsoft/speecht5_tts) or the directory containing the text-to-speech model (alternative to system TTS)" /></span>
+							<div class="browse_row">
+								<span class="browse_spacer" aria-hidden="true"></span>
+								<input type="text" id="tts_model" class="cfg_txt" value="">
+								<button class="btn browse_btn" onclick="OpenFolder('tts_model')">BROWSE</button>
+							</div>
+							<span class="cfg_lbl">ASR Model <img class="help_icon" width="16" height="16" title="The model ID (e.g. openai/whisper-large-v3-turbo) or the directory containing the automatic speech recognition model" /></span>
+							<div class="browse_row">
+								<span class="browse_spacer" aria-hidden="true"></span>
+								<input type="text" id="sr_model" class="cfg_txt" value="">
+								<button class="btn browse_btn" onclick="OpenFolder('sr_model')">BROWSE</button>
+							</div>
+						</div>
+						<div class="settings_col">
+							<span class="cfg_lbl">Model Setup <img class="help_icon" width="16" height="16" title="Optional setup arguments. Example: model_adapter=C:/model/adapter, torch_dtype=float32, custom_model_code=true, im_safety_check=false, im_res_vram_mb=3200, anim_max_secs=60, audio_max_chars=5000" /></span>
+							<input type="text" id="model_args" class="cfg_txt" value="" placeholder="Setup arguments (comma separated)">
+							<span class="cfg_lbl">Startup Method <img class="help_icon" width="16" height="16" title="Choose which models should be loaded when the engine starts. Models not loaded at startup will be loaded automatically when required." /></span>
+							<select id="startup_select" class="cfg_drp">
+								<option value="none" selected>No model loading</option>
+								<option value="text">Load text model</option>
+								<option value="image">Load image model</option>
+								<option value="speech">Load text-to-speech model</option>
+								<option value="sr">Load speech recognition model</option>
+								<option value="all">Load all models</option>
+							</select>
+							<span class="cfg_lbl">Text Model Type <img class="help_icon" width="16" height="16" title="The type of AI model used for text generation." /></span>
+							<select id="tmodel_select" class="cfg_drp">
+								<option value="0" selected>Auto Language Model</option>
+								<option value="2">Auto Multimodal Model</option>
+								<option value="1">Auto Model</option>
+							</select>
+							<span class="cfg_lbl">Image Model Type <img class="help_icon" width="16" height="16" title="The type of AI model used for image generation." /></span>
+							<select id="imodel_select" class="cfg_drp">
+								<option value="0">Stable Diffusion</option>
+								<option value="1">Stable Diffusion XL</option>
+								<option value="2">Stable Diffusion 3</option>
+								<option value="3">FLUX</option>
+								<option value="4">Qwen Image</option>
+							</select>
+							<span class="cfg_lbl">TTS Model Type <img class="help_icon" width="16" height="16" title="The type of AI model used for text-to-speech (models will be automatically downloaded if the 'TTS Model' setting is left empty)." /></span>
+							<select id="smodel_select" class="cfg_drp">
+								<option value="0">SpeechT5</option>
+								<option value="1">ChatTTS</option>
+								<option value="2">Kokoro</option>
+								<option value="3">VoxCPM</option>
+								<option value="4">NeuTTS Air</option>
+								<option value="5">Kitten TTS</option>
+								<option value="6">Audio8 TTS</option>
+							</select>
+							<span class="cfg_lbl">Compute Device <img class="help_icon" width="16" height="16" title="If your GPU doesn't support CUDA or you don't have enough VRAM then select the CPU or Auto option. Auto will try to use all available compute devices." /></span>
+							<select id="device_select" class="cfg_drp">
+								<option value="auto" selected>Auto</option>
+								<option value="cpu">CPU</option>
+								<option value="cuda">GPU</option>
+							</select>
+						</div>
+					</div>
+					<div id="other_settings" class="hidden">
+						<div class="settings_col">
+							<span class="cfg_lbl">Text Formatting <img class="help_icon" width="16" height="16" title="The text formatting syntax used in messages on the Chat Bot tab." /></span>
+							<select id="format_mode" class="cfg_drp">
+								<option value="0" selected>None</option>
+								<option value="1">BBCode</option>
+								<option value="2">Markdown</option>
+							</select>
+							<span class="cfg_lbl">Enable Text Streaming <img class="help_icon" width="16" height="16" title="Enable text streaming to see a live view of the model output instead of waiting for all tokens to be generated first." /></span>
+							<select id="txtgen_mode" class="cfg_drp">
+								<option value="1">True</option>
+								<option value="0" selected>False</option>
+							</select>
+							<span class="cfg_lbl">Enable Dev Mode <img class="help_icon" width="16" height="16" title="Allow access to developer tools (right click to inspect element)." /></span>
+							<select id="devmode_enable" class="cfg_drp">
+								<option value="1">True</option>
+								<option value="0" selected>False</option>
+							</select>
+							<span class="cfg_lbl">Enable Tool Use <img class="help_icon" width="16" height="16" title="Allow the chat bot to utilize tool functions." /></span>
+							<select id="tooluse_enable" class="cfg_drp">
+								<option value="1" selected>True</option>
+								<option value="0">False</option>
+							</select>
+						</div>
+						<div class="settings_col">
+							<span class="cfg_lbl">UI Theme <img class="help_icon" width="16" height="16" title="Visual theme for the app. Each theme is a self-contained CSS file under css/themes/." /></span>
+							<select id="ui_theme" class="cfg_drp">
+								<option value="modern" selected>Modern</option>
+								<option value="classic">Classic</option>
+							</select>
+							<span class="cfg_lbl">Auto-send ASR Output <img class="help_icon" width="16" height="16" title="Automatically send messages when using speech recognition." /></span>
+							<select id="asasro_enable" class="cfg_drp">
+								<option value="1">True</option>
+								<option value="0" selected>False</option>
+							</select>
+							<span class="cfg_lbl">Start Recording Shortcut <img class="help_icon" width="16" height="16" title="They keyboard shortcut used to start voice recording." /></span>
+							<input type="text" id="start_rec_keys" class="cfg_txt keys_input" value="">
+							<span class="cfg_lbl">Stop Recording Shortcut <img class="help_icon" width="16" height="16" title="They keyboard shortcut used to stop voice recording." /></span>
+							<input type="text" id="stop_rec_keys" class="cfg_txt keys_input" value="">
+						</div>
+					</div>
+					<div id="remote_settings" class="hidden">
+						<div class="settings_col">
+							<span class="cfg_lbl">Use Remote Backend <img class="help_icon" width="16" height="16" title="The remote backend uses an OpenAI-compatible chat API and does not load a local text model." /></span>
+							<select id="text_backend" class="cfg_drp">
+								<option value="local" selected>False</option>
+								<option value="remote">True</option>
+							</select>
+							<span class="cfg_lbl">Remote Protocol <img class="help_icon" width="16" height="16" title="Wire protocol for remote chat. OpenAI (default) = OpenAI-compat chat.completions with structured tools. Anthropic = native Messages API (tool_use) - requires Remote API Key; empty Base URL uses api.anthropic.com." /></span>
+							<select id="remote_tool_format" class="cfg_drp">
+								<option value="openai" selected>OpenAI</option>
+								<option value="anthropic">Anthropic</option>
+							</select>
+							<span class="cfg_lbl">Prompt Cache <img class="help_icon" width="16" height="16" title="When Remote Protocol is Anthropic, send cache_control type ephemeral so stable prompt prefixes can be reused across turns (default on). Ignored for OpenAI protocol." /></span>
+							<select id="remote_prompt_cache" class="cfg_drp">
+								<option value="1" selected>True</option>
+								<option value="0">False</option>
+							</select>
+							<span class="cfg_lbl">HuggingFace Access Token <img class="help_icon" width="16" height="16" title="Used to download gated Hub models and as the default API key for Hugging Face Inference Providers when Remote API Key is empty." /></span>
+							<input type="text" id="hf_access_token" class="cfg_txt" value="">
+						</div>
+						<div class="settings_col">
+							<span class="cfg_lbl">Remote Base URL <img class="help_icon" width="16" height="16" title="OpenAI-compatible API base URL. Leave empty for Hugging Face Inference Providers (router.huggingface.co/v1). Examples: https://openrouter.ai/api/v1, https://api.openai.com/v1, http://localhost:11434/v1" /></span>
+							<input type="text" id="remote_base_url" class="cfg_txt" value="" placeholder="(HF Inference Providers)">
+							<span class="cfg_lbl">Remote Model ID <img class="help_icon" width="16" height="16" title="Model id required when the remote backend is enabled (e.g. meta-llama/Meta-Llama-3-8B-Instruct, gpt-4o, llama3.2). On the HF router you may include a provider suffix (model:together)." /></span>
+							<input type="text" id="remote_model" class="cfg_txt" value="">
+							<span class="cfg_lbl">Remote Provider <img class="help_icon" width="16" height="16" title="Optional Hugging Face router provider suffix when Base URL is empty (e.g. together, groq, fireworks-ai). Appended as model:provider when the model id has no colon. Leave blank for auto (:fastest)." /></span>
+							<input type="text" id="remote_provider" class="cfg_txt" value="" placeholder="(auto)">
+							<span class="cfg_lbl">Remote API Key <img class="help_icon" width="16" height="16" title="API key for the remote endpoint. Leave empty to fall back to the HuggingFace Access Token (useful for HF Inference Providers)." /></span>
+							<input type="text" id="remote_api_key" class="cfg_txt" value="">
+						</div>
+					</div>
+					<br><hr><br>
+					<button id="settings_btn" class="btn cfg_btn" onclick="ApplySettings()">APPLY</button>
+					<button id="restart_btn" class="btn cfg_btn" onclick="RestartScript()">RESTART ENGINE</button>
+					<br><br>
+				</div>
+			</div>
+			
+			<div id="help_tab" class="hidden">
+
+				<div class="center subtab_nav">
+					<button type="button" id="inst_help_btn" class="subtab_btn subtab_sel" onclick="ShowInstallHelp()">Installing</button>
+					<button type="button" id="args_help_btn" class="subtab_btn" onclick="ShowSetupHelp()">Model Setup</button>
+				</div>
+
+				<div id="install_txt">
+
+					<h3 class="help_title">Install Guide</h3>
+
+					<p>Download the <a href="https://github.com/JacobBruce/AI-UI/releases" target="_blank">latest release</a> of AI UI, extract it, then follow the steps below.</p>
+					<p>You always need a <b>Python environment</b> for the AI engine. The Electron app itself is included in the release.</p>
+
+					<h5>Quick Install (recommended)</h5>
+					<p>Run the Python script from the extracted release folder (requires Python 3.12 - 3.14):</p>
+					<pre class="help_code"><code>python install.py</code></pre>
+					<p>On Linux you may need <code>python3 install.py</code>. The script creates the venv, installs the lite or full stack, and CUDA/CPU PyTorch (for full stack). When finished it writes/updates the config file at <code>~/.aiui/config.json</code>.</p>
+					<pre class="help_code"><code>python install.py --venv ~/aiui-venv --lite --yes
+python install.py --venv C:\aiui-venv --full --torch cu128 --yes</code></pre>
+
+					<h5>Manual Install</h5>
+
+					<details>
+						<summary onclick="ToggleDetails(this)">Click to show install instructions for Windows</summary>
+
+						<h5>1. Python</h5>
+						<p>Install <a href="https://www.python.org/downloads/windows/" target="_blank">Python</a> (3.12.x recommended).</p>
+						<p>CUDA is optional but recommended if you have an Nvidia GPU:</p>
+						<ul class="help_list">
+							<li><a href="https://developer.nvidia.com/cuda-toolkit-archive" target="_blank">CUDA Toolkit</a> (12.8 recommended)</li>
+						</ul>
+						<p>Open a command prompt and create a virtual environment:</p>
+						<pre class="help_code"><code>python -m venv C:/venv</code></pre>
+						<p>Replace <code>C:/venv</code> if you want the environment somewhere else. Activate it:</p>
+						<pre class="help_code"><code>C:/venv/Scripts/activate.bat</code></pre>
+						<p>If your GPU supports CUDA, install PyTorch <em>before</em> the other requirements (not needed if using lite requirements):</p>
+						<pre class="help_code"><code>pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128</code></pre>
+						<p>Then install the engine packages (replace <code>C:/AI_UI</code> with where you extracted the release; it should contain <code>AI_UI.exe</code>):</p>
+						<pre class="help_code"><code>pip install -r C:/AI_UI/engine/requirements.txt</code></pre>
+						<p>Use <code>requirements-lite.txt</code> instead of <code>requirements.txt</code> if you only want to use remote API's and don't need to run local models.</p>
+
+						<h5>2. App packages (only if needed)</h5>
+						<p>Skip this if your release already includes <code>resources/app/app.bundle.js</code>, <code>vendor.bundle.js</code>, and <code>node_modules</code>.</p>
+						<p>Otherwise install <a href="https://nodejs.org" target="_blank">Node.js</a> for Windows, then:</p>
+						<pre class="help_code"><code>cd C:/AI_UI/resources/app
+npm install</code></pre>
+
+						<h5>3. Launch</h5>
+						<p>Start AI UI by launching <code>AI_UI.exe</code>. On the <b>Settings</b> tab, set <code>Python Binary</code> to your venv interpreter, e.g. <code>C:/venv/Scripts/python.exe</code>.</p>
+					</details>
+
+					<details>
+						<summary onclick="ToggleDetails(this)">Click to show install instructions for Linux</summary>
+
+						<h5>1. Python</h5>
+						<p>Ensure Python is installed (3.12.x recommended). On Debian/Ubuntu you may also need:</p>
+						<pre class="help_code"><code>sudo apt install python3-pip python3.12-venv</code></pre>
+						<p>Create and activate a virtual environment:</p>
+						<pre class="help_code"><code>python3 -m venv ./venv
+source ./venv/bin/activate</code></pre>
+						<p>If your GPU supports CUDA, install PyTorch <em>before</em> the other requirements (not needed if using lite requirements):</p>
+						<pre class="help_code"><code>pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128</code></pre>
+						<p>Then install the engine packages (replace <code>./AI_UI</code> with the extracted release path; it should contain the <code>electron</code> binary):</p>
+						<pre class="help_code"><code>pip install -r ./AI_UI/engine/requirements.txt</code></pre>
+						<p>Use <code>requirements-lite.txt</code> instead of <code>requirements.txt</code> if you only want to use remote API's and don't need to run local models.</p>
+
+						<h5>2. App packages (only if needed)</h5>
+						<p>Skip this if your release already includes <code>resources/app/app.bundle.js</code>, <code>vendor.bundle.js</code>, and <code>node_modules</code>.</p>
+						<p>Otherwise:</p>
+						<pre class="help_code"><code>sudo apt install npm
+cd AI_UI/resources/app
+npm install</code></pre>
+
+						<h5>3. Chromium sandbox and launch</h5>
+						<p>From the folder that contains the <code>electron</code> binary (not from another working directory):</p>
+						<pre class="help_code"><code>sudo chown root:root ./chrome-sandbox
+sudo chmod 4755 ./chrome-sandbox
+./electron</code></pre>
+						<p>If you prefer not to configure the sandbox helper:</p>
+						<pre class="help_code"><code>./electron --no-sandbox</code></pre>
+						<p>On the <b>Settings</b> tab, set <code>Python Binary</code> to your venv interpreter, e.g. <code>path/to/venv/bin/python3</code>.</p>
+					</details>
+
+					<h3 class="help_title">Important Info</h3>
+					
+					<h4>Node packages and bundles</h4>
+					<p>The UI loads two prebuilt files:</p>
+					<ul class="help_list">
+						<li><code>resources/app/vendor.bundle.js</code> - jQuery, markdown-it, highlight.js, KaTeX helpers, etc.</li>
+						<li><code>resources/app/app.bundle.js</code> - AI UI’s own renderer code</li>
+					</ul>
+					<p>Those are produced with esbuild (<code>npm run build:vendor</code> / <code>npm run build:app</code>). The Electron <b>main</b> process also needs packages under <code>resources/app/node_modules</code> (for example <code>adm-zip</code> for downloads).</p>
+					<p><b>For GitHub releases:</b> the built <code>*.bundle.js</code> files and the packages under <code>resources/app/node_modules</code> are included with releases so you do <b>not</b> need Node.js.</p>
+					<p><b>If those files are missing</b> (or you cloned the git repo), install <a href="https://nodejs.org" target="_blank">Node.js</a> and run:</p>
+					<pre class="help_code"><code>cd path/to/AI_UI/resources/app
+npm install</code></pre>
+
+					<h4>Windows Users</h4>
+					<p>If you place AI UI into Program Files or another protected directory, you may need to run as administrator. Prefer a normal folder such as <code>C:/AI_UI/</code>.</p>
+
+					<h4>Linux Users</h4>
+					<p>Always start AI UI from the directory that contains the <code>electron</code> binary so relative paths resolve correctly.</p>
+					<p>The <code>chrome-sandbox</code> binary must be owned by root with mode <code>4755</code> for the Chromium sandbox, unless using <code>--no-sandbox</code>.</p>
+
+					<h3 class="help_title">Upgrading</h3>
+					<ol class="help_list">
+						<li>Extract the new release over (or beside) your existing install.</li>
+						<li>Re-run the install script against your existing venv:
+							<pre class="help_code"><code>python install.py --upgrade --venv path/to/venv --lite --yes
+# or full (skip torch if already installed):
+python install.py --upgrade --venv path/to/venv --full --torch skip --yes</code></pre>
+							Or activate your Python venv and update packages manually:
+							<pre class="help_code"><code>pip install -U -r path/to/AI_UI/engine/requirements-lite.txt
+# or full local stack:
+pip install -U -r path/to/AI_UI/engine/requirements.txt</code></pre>
+						</li>
+						<li>If the release notes say Node dependencies changed, or <code>app.bundle.js</code> / <code>vendor.bundle.js</code> / <code>node_modules</code> are missing, run <code>npm install</code> again in <code>resources/app</code> (or <code>python install.py --npm --venv ...</code>).</li>
+					</ol>
+
+					<h3 class="help_title">Getting Started</h3>
+					<ol class="help_list">
+						<li>Launch AI UI and open the <b>Settings</b> tab.</li>
+						<li>Set <b>Engine Folder</b> to the included <code>engine</code> directory if it's not auto-detected (contains <code>aiui_engine.py</code>).</li>
+						<li>Confirm <b>Python Binary</b> points at your venv (<code>.../Scripts/python.exe</code> on Windows, <code>.../bin/python3</code> on Linux).</li>
+						<li>For <b>remote chat</b>: set <b>Use Remote Backend</b> to <code>True</code> and configure Remote Settings.</li>
+						<li>For <b>local chat</b>: set <b>Text Model</b> (and optionally image/TTS/ASR models) to a local folder or Hugging Face model ID.</li>
+						<li>Click <b>APPLY</b>, then check the <b>Console</b> tab if the engine does not start.</li>
+					</ol>
+
+					<p>Local chat needs a text model in Hugging Face Transformers format (full <code>requirements.txt</code> stack). Image features need a Diffusers-format image model.</p>
+
+					<p>The image/TTS/ASR and avatar animation models can still be used with remote chat mode but will also require the full <code>requirements.txt</code> stack.</p>
+					
+					<h3 class="help_title">Remote Chat</h3>
+					<p>The <b>Remote Settings</b> can point the Chat Bot at a remote API instead of loading a local text model. OpenAI-compatible endpoints use the OpenAI Python SDK; Anthropic Messages uses the Anthropic SDK.</p>
+					<ol class="help_list">
+						<li>Set <b>Use Remote Backend</b> to <code>True</code>.</li>
+						<li>Set <b>Remote Model ID</b> (required).</li>
+						<li>Leave <b>Remote Base URL</b> empty for Hugging Face Inference Providers (<code>https://router.huggingface.co/v1</code>; use your HF token), or set a URL such as:
+							<pre class="help_code"><code>https://openrouter.ai/api/v1
+https://api.openai.com/v1
+http://localhost:11434/v1</code></pre>
+						</li>
+						<li>Optional: when Base URL is empty, set <b>Remote Provider</b> to pin a router provider (appended as <code>model:provider</code>).</li>
+						<li>Set <b>Remote API Key</b>, or leave it empty to fall back to <b>HuggingFace Access Token</b> (OpenAI-compat / HF only - Anthropic requires an API key). Local serve/Ollama can omit both keys.</li>
+						<li>Optional: set <b>Remote Protocol</b> to <code>OpenAI</code> (default; use for Hugging Face Inference Providers and OpenRouter) or <code>Anthropic</code> (Anthropic Messages).</li>
+						<li>For Anthropic: leave <b>Base URL</b> empty for <code>api.anthropic.com</code>, set <b>Model ID</b> (e.g. <code>claude-sonnet-4-6</code>), enable <b>Prompt Cache</b> (default) for automatic ephemeral caching.</li>
+						<li>Click <b>APPLY</b>. The engine will not load local chat weights while Remote is active.</li>
+					</ol>
+
+					<p>File attachments: The attach dialog <b>Vision</b> control selects the local multimodal family and is disabled when Text Backend is Remote. Remote sends images (up to 10 MiB) and videos (up to 100 MiB) as <code>image_url</code> / <code>video_url</code> (http or base64) plus text-file contents; audio is skipped on remote.</p>
+
+					<h3 class="help_title">Context Compaction</h3>
+					<p>In AI Settings, <b>Context Token Budget</b> enables context summarization (aka context compaction) when the conversation length approaches that limit.</p>
+					
+					<p>Set <b>Context Token Budget</b> to <code>0</code> to use classic <b>Max Message Memory</b> pruning (old information is lost, prefer summarization for long-range tasks).</p>
+					
+					<p>To customize the context summarization instructions, place a <code>compact_prompt.txt</code> file in <code>~/.aiui</code>.</p>
+
+					<h3 class="help_title">Tool Use</h3>
+					<p>With <b>Enable Tool Use</b> on, tool schemas are passed into the chat template via the <code>tools</code> argument (AI UI Template and Model Template).</p>
+					
+					<p>The engine accepts JSON object, JSON array (multi-call), and XML <code>&lt;function=...&gt;</code> / <code>&lt;parameter=...&gt;</code> forms inside <code>&lt;tool_call&gt;</code>.</p>
+					
+					<p>Use <b>AI UI Template (no tool prompt)</b> when a rule should teach the call format instead of the built-in template instructions.</p>
+				</div>
+
+				<div id="setupargs_txt" class="hidden">
+				
+					<p class="help_intro center">A list of all the setup arguments which can be used for the Model Setup on the Settings tab.</p>
+					<hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">torch_dtype</code> <small class="arg_title">(default: auto)</small></h3>
+					<p class="arg_meta">Description: The Torch data type used by the text generation model. Models using float16 will be faster and use less memory but are slightly lower quality than float32 models.</p>
+					<p class="arg_meta">Valid Values: <code>float32</code>, <code>float16</code>, <code>bfloat16</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">torch_compile</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: Enable to make PyTorch code run faster by using JIT-compiling. This can greatly increase generation speeds for some models. This feature may not be available on Windows platforms.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">min_res_vram_mb</code> <small class="arg_title">(default: auto)</small></h3>
+					<p class="arg_meta">Description: Minimum VRAM to keep reserved as generation headroom and for loading small models on the fly. Default scales with GPU size from an 8GB baseline of 256. Freed before generation and reclaimed afterward. This only has an effect when the <code>Compute Device</code> is set to Auto.</p>
+					<p class="arg_meta">Valid Values: <code>any integer (megabytes)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">gguf_file</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The file name (not a full path) of a GGUF file to be used by the text generation model. This allows quantized GGUF models to be loaded. The <code>Text Model</code> setting should point to a location containing the gguf file and any other model files that may be required.</p>
+					<p class="arg_meta">Valid Values: <code>any string (gguf model file)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">use_safetensors</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: If this argument isn't set the text generation model will try loading from a .safetensors file if one is available. If true the model will be forcibly loaded from a .safetensors file. If set to false the model will not try loading from safetensors.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">custom_model_code</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: This allows the text generation model to use custom code. Technically it sets the trust_remote_code argument to true or false. Enable only with trusted models.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">custom_token_code</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: This allows the text tokenizer to use custom code. Technically it sets the trust_remote_code argument to true or false. Enable only with trusted tokenizers.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">load_in_8bit</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: Load the text generation model so it is quantized with 8-bit precision. Quantized models typically use much less memory and run faster but produce lower quality results.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">use_chat_template</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: Some models can automatically format the chat log into the template they use. Prefer <code>Template Format</code> in AI Settings instead of this flag when possible. If the 'system' role is unsupported set Prompt Persistence to 'No Prompt' in the AI Settings of the chat bot.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">use_aiui_template</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: Enables the AI UI custom chat template (with tool-call format instructions). Prefer <code>Template Format</code> in AI Settings: <code>AI UI Template</code> or <code>AI UI Template (no tool prompt)</code>.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">skip_special_tokens</code> <small class="arg_title">(default: true)</small></h3>
+					<p class="arg_meta">Description: If enabled the tokenizer will skip special tokens when decoding the output of the text generation model. Should usually be enabled.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">cleanup_token_space</code> <small class="arg_title">(default: true)</small></h3>
+					<p class="arg_meta">Description: Enable to cleanup any spaces that were added when splitting the input text during the tokenization process. Should usually be enabled.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">speech_recog_class</code> <small class="arg_title">(default: 'AutoModelForSpeechSeq2Seq')</small></h3>
+					<p class="arg_meta">Description: The transformers model class used for the speech recognition model (aka text-to-speech model). This setting should only be changed if you know what you are doing.</p>
+					<p class="arg_meta">Valid Values: <code>class name</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">text_lang_class</code> <small class="arg_title">(default: 'AutoModelForCausalLM')</small></h3>
+					<p class="arg_meta">Description: The transformers model class used for the text generation model. This only has an effect when <code>Text Model Type</code> is set to 'Auto Language Model' on the Settings tab.</p>
+					<p class="arg_meta">Valid Values: <code>class name</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">multi_modal_class</code> <small class="arg_title">(default: 'AutoModelForImageTextToText')</small></h3>
+					<p class="arg_meta">Description: The transformers model class used for the text generation model. This only has an effect when <code>Text Model Type</code> is set to 'Auto Multimodal Model' on the Settings tab.</p>
+					<p class="arg_meta">Valid Values: <code>class name</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">attn_implementation</code> <small class="arg_title">(default: 'sdpa')</small></h3>
+					<p class="arg_meta">Description: The attention implementation to use in the text generation model (if relevant). If available, SDPA will be used be default, otherwise the manual 'eager' implementation will be used.</p>
+					<p class="arg_meta">Valid Values: <code>'eager'</code>, <code>'sdpa'</code>, <code>'flash_attention_2'</code>, <code>'flash_attention_3'</code>, <code>'flex_attention'</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">roles_append_str</code> <small class="arg_title">(default: ': ')</small></h3>
+					<p class="arg_meta">Description: The default chat log format appends a colon and a space after the usernames/roles (e.g. Human: hello). Use this to change the appended text. Use &#92;n for new lines (e.g. roles_append_str=&#92;n). This only has an effect when Template Format is set to <code>None</code>.</p>
+					<p class="arg_meta">Valid Values: <code>any string</code></p><hr class="wide_hr">
+
+					<h3 class="arg_block"><code class="arg_name">anim_max_secs</code> <small class="arg_title">(default: 30)</small></h3>
+					<p class="arg_meta">Description: Maximum TTS audio length (seconds) for talking-avatar video. If the spoken reply is longer than this, video generation is skipped entirely (no partial clip) and audio-only playback is used instead. Set to <code>0</code> to disable the cap.</p>
+					<p class="arg_meta">Valid Values: <code>number &gt;= 0</code></p><hr class="wide_hr">
+
+					<h3 class="arg_block"><code class="arg_name">audio_max_chars</code> <small class="arg_title">(default: 4000)</small></h3>
+					<p class="arg_meta">Description: Maximum character length for TTS input (chat talk mode, Speech Gen, and read-aloud). Longer text skips speech entirely rather than generating a huge clip. Set to <code>0</code> for no soft cap (a hard 100000-character ceiling still applies).</p>
+					<p class="arg_meta">Valid Values: <code>integer &gt;= 0</code></p><hr class="wide_hr">
+
+					<h3 class="arg_block"><code class="arg_name">audio_max_new_tokens</code> <small class="arg_title">(default: 4096)</small></h3>
+					<p class="arg_meta">Description: Maximum TTS codec frames per chunk (~21.5 frames/s). Currently only used by Audio8 TTS. Generation normally stops earlier on EOS; this is only an upper bound. Audio8 clamps further by its context length.</p>
+					<p class="arg_meta">Valid Values: <code>positive integer</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">vocoder_model</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The directory or Model ID of a speech vocoder model to be used by the text-to-speech model. Usually not needed and may not be supported by some TTS models.</p>
+					<p class="arg_meta">Valid Values: <code>any string (vocoder model folder)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">tokenizer_model</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The directory or Model ID of a tokenizer/processor for the text generation model. Most text generation models should come with tokenizers so this usually isn't needed.</p>
+					<p class="arg_meta">Valid Values: <code>any string (tokenizer model folder)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">model_adapter</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The directory or Model ID of an adapter for the text generation model. Adapters adjust the base model so it acts like a fine-tuned model without the need to download a full fine-tuned model.</p>
+					<p class="arg_meta">Valid Values: <code>any string (adapter model folder)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_vae_file</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The path to a Variational Auto-Encoder (VAE) model file to be used by the image generation model. Cannot be directory, must be path to a single model file.</p>
+					<p class="arg_meta">Valid Values: <code>any string (vae model file)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_unet_file</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The path to a Conditional U-Net model file to be used by the image generation model. Only this or <code>im_tran_file</code> should be set, not both. Cannot be directory, must be path to a single model file.</p>
+					<p class="arg_meta">Valid Values: <code>any string (vae model file)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_tran_file</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The path to a transformer model file to be used by the image generation model. Only applies to newer diffusion models such as Stable Diffusion 3. Cannot be directory, must be path to a single model file.</p>
+					<p class="arg_meta">Valid Values: <code>any string (transformer model file)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_enc_file</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The path to a text encoder model file to be used by the image generation model. Use <code>im_enc2_file</code> and <code>im_enc3_file</code> for the 2nd and 3rd text encoders. Cannot be directory, must be path to a single model file.</p>
+					<p class="arg_meta">Valid Values: <code>any string (text encoder model file)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_config_file</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The path to a .yaml config file which specifies the architecture for the image generation model. This only has an effect when loading single model files, can be useful for offline model loading.</p>
+					<p class="arg_meta">Valid Values: <code>any string (model config file)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_variant</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The model variant to use for the image generation model. For example, a value of 'fp16' is typically used to load the 16 bit floating point variant of a model.</p>
+					<p class="arg_meta">Valid Values: <code>any string (variant name)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_model_class</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The diffusers model class used for the image generation model. This argument overrides the <code>Image Model Type</code> setting. Only change this if you know what you are doing.</p>
+					<p class="arg_meta">Valid Values: <code>any string (class name)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_lora_file</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The file name (not a full path) of a LoRA model to be used as an adapter for the image generation model (e.g. pixel-art-xl.safetensors). Requires <code>im_lora_dir</code> to be set.</p>
+					<p class="arg_meta">Valid Values: <code>any string (lora model file)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_lora_dir</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: The directory containing the LoRA adapter for the image generation model. This can also point to an online Hugging Face repository (e.g. nerijs/pixel-art-xl)</p>
+					<p class="arg_meta">Valid Values: <code>any string (lora model directory)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_lora_scale</code> <small class="arg_title">(default: 1.0)</small></h3>
+					<p class="arg_meta">Description: Controls how much the LoRA adapter will influence the output of the image model. Higher values will give the LoRA more influence on the output. Should be a value between 0 and 2.</p>
+					<p class="arg_meta">Valid Values: <code>decimal number (0.0 to 2.0)</code></p><hr class="wide_hr">
+				
+					<h3 class="arg_block"><code class="arg_name">im_torch_dtype</code> <small class="arg_title">(default: float16)</small></h3>
+					<p class="arg_meta">Description: The Torch data type used by the image generation model. Models using float16 will be faster and use less memory but are slightly lower quality than float32 models.</p>
+					<p class="arg_meta">Valid Values: <code>float32</code>, <code>float16</code>, <code>bfloat16</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_res_vram_mb</code> <small class="arg_title">(default: auto)</small></h3>
+					<p class="arg_meta">Description: Extra VRAM to reserve for the image model so the text model does not fill that space at placement time. Default scales with GPU size from an 8GB baseline of 1536 when an image model path is set (0 otherwise). After the image model loads, only <code>min_res_vram_mb</code> stays reserved. This only has an effect when the <code>Compute Device</code> is set to Auto.</p>
+					<p class="arg_meta">Valid Values: <code>any integer (megabytes)</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_load_in_8bit</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: Load the image generation model with large components quantized using the bitsandbytes library. Does apply to some models loaded separately (using <code>im_tran_file</code> for example) but doesn't apply to GGUF files.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_safety_check</code> <small class="arg_title">(default: true)</small></h3>
+					<p class="arg_meta">Description: Enable the safety checker to censor NSFW images produced by the image generation model. Set to false to disable the safety checker and prevent it from producing blank images.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_cpu_offload</code> <small class="arg_title">(default: true)</small></h3>
+					<p class="arg_meta">Description: Enable CPU offloading for the image generation model to lower VRAM usage. Submodules of the model will be offloaded from the GPU to system memory when not in use. May reduce generation speed.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_att_slicing</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: Enable attention slicing for the image generation model to lower VRAM usage. Splits the attention computations into steps instead of doing them all at once.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_from_single_file</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: Force the image generation model to load from a single file such as a .safetensors or .ckpt file. Can be a local file path or a link to an online file (e.g. https&colon;//mysite.com/mymodel.safetensors)</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_local_files</code> <small class="arg_title">(default: false)</small></h3>
+					<p class="arg_meta">Description: Force the image generation model to load from local files only. This may be necessary to avoid errors when loading local models. Technically it sets the local_files_only argument to true or false.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p><hr class="wide_hr">
+					
+					<h3 class="arg_block"><code class="arg_name">im_use_safetensors</code> <small class="arg_title">(default: none)</small></h3>
+					<p class="arg_meta">Description: If this argument isn't set the image generation model will try loading from a .safetensors file if one is available. If true the model will be forcibly loaded from a .safetensors file. If set to false the model will not try loading from safetensors.</p>
+					<p class="arg_meta">Valid Values: <code>true</code>, <code>false</code></p>
+				</div>
+			</div>
+
+			<div id="about_tab" class="hidden">
+				<div class="center" id="about_box">
+					<h2>About AI UI</h2><hr>
+					<p>AI UI is a user-friendly interface for interacting with AI.<br>An open source project created by <a href="https://bitfreak.info" target="_blank">Bitfreak Software</a>.</p>
+					<p><span class="about_lbl">BTC Donations:</span> <code>18MWPVJA9mFLPFT3zht5twuNQmZBDzHoWF</code><br>
+					<span class="about_lbl">ETH Donations:</span> <code>0x3cd1742c4AEB0e2e7D64530EB1393ff6E84b2e9F</code></p>
+					<hr>
+					<p><span class="about_lbl">App Version:</span> <span id="aiui-version"></span><br>
+					<span class="about_lbl">Electron Version:</span> <span id="electron-version"></span><br>
+					<span class="about_lbl">Node.js Version:</span> <span id="node-version"></span><br>
+					<span class="about_lbl">Chrome Version:</span> <span id="chrome-version"></span></p>
+				</div>
+			</div>
+		</div>
+	</div>
+	<script src="./vendor.bundle.js"></script>
+	<script src="./app.bundle.js"></script>
+</body>
+</html>

@@ -6,9 +6,12 @@
 """
 
 import sys
-sys.path.append('MakeItTalk/thirdparty/AdaptiveWingLoss')
-sys.path.append('MakeItTalk')
-import os, glob
+import os
+_MIT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(_MIT_ROOT, 'thirdparty', 'AdaptiveWingLoss'))
+if _MIT_ROOT not in sys.path:
+	sys.path.insert(0, _MIT_ROOT)
+import glob
 import numpy as np
 import cv2
 import argparse

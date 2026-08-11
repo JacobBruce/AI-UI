@@ -1,10 +1,13 @@
 import sys
-sys.path.append('SadTalker')
+import os
+_ST_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _ST_ROOT not in sys.path:
+	sys.path.insert(0, _ST_ROOT)
 from glob import glob
 import shutil
 import torch
 from time import strftime
-import os, time
+import time
 from argparse import ArgumentParser
 
 from src.utils.preprocess import CropAndExtract
@@ -51,7 +54,7 @@ parser.add_argument('--z_far', type=float, default=15.)
 
 args = parser.parse_args()
 
-os.makedirs('./SadTalker/results', exist_ok=True)
+os.makedirs('./results', exist_ok=True)
 
 face_img = ''
 crop_info = None
@@ -84,7 +87,8 @@ def loadface(avatar_img):
 		if first_coeff_path is None:
 			print("ERROR: Can't get the coeffs of the input")
 			return False
-	except:
+	except Exception as e:
+		print(f"ERROR: loadface failed ({e})")
 		return False
 		
 	face_img = avatar_img
@@ -105,14 +109,14 @@ def animface(chat_wav):
 
 	try:
 		audio_to_coeff = Audio2Coeff(sadtalker_paths, args.device)
-	except:
-		print("ERROR: Audio2Coeff init issue")
+	except Exception as e:
+		print(f"ERROR: Audio2Coeff init issue ({e})")
 		return False
 		
 	try:
 		animate_from_coeff = AnimateFromCoeff(sadtalker_paths, args.device)
-	except:
-		print("ERROR: AnimateFromCoeff init issue")
+	except Exception as e:
+		print(f"ERROR: AnimateFromCoeff init issue ({e})")
 		return False
 
 	ref_eyeblink_coeff_path=None
@@ -121,8 +125,8 @@ def animface(chat_wav):
 	try: #audio2ceoff
 		batch = get_data(first_coeff_path, chat_wav, args.device, ref_eyeblink_coeff_path, still=args.still)
 		coeff_path = audio_to_coeff.generate(batch, save_dir, pose_style, ref_pose_coeff_path)
-	except:
-		print("ERROR: SadTalker audio2ceoff issue")
+	except Exception as e:
+		print(f"ERROR: SadTalker audio2ceoff issue ({e})")
 		return False
 
 	# 3dface render
@@ -137,8 +141,12 @@ def animface(chat_wav):
 
 		result = animate_from_coeff.generate(data, save_dir, face_img, crop_info, \
 									enhancer=args.enhancer, background_enhancer=args.background_enhancer, preprocess=args.preprocess, img_size=args.size)
-	except:
-		print("ERROR: SadTalker coeff2video issue")
+	except Exception as e:
+		msg = str(e)
+		if 'out of memory' in msg.lower() or type(e).__name__ == 'OutOfMemoryError':
+			print("ERROR: SadTalker ran out of GPU memory")
+		else:
+			print(f"ERROR: SadTalker coeff2video issue ({e})")
 		return False
 
 	shutil.move(result, os.path.join(args.result_dir, 'face_pred_fls_speech_audio_embed.mp4'))

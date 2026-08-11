@@ -113,7 +113,7 @@ class CropAndExtract():
         frames_pil = [Image.fromarray(cv2.resize(frame,(pic_size, pic_size))) for frame in x_full_frames]
         if len(frames_pil) == 0:
             print('No face is detected in the input file')
-            return None, None
+            return None, None, None
 
         # save crop info
         for frame in frames_pil:
@@ -145,7 +145,8 @@ class CropAndExtract():
 
                 trans_params, im1, lm1, _ = align_img(frame, lm1, self.lm3d_std)
  
-                trans_params = np.array([float(item) for item in np.hsplit(trans_params, 5)]).astype(np.float32)
+                # NumPy 2: hsplit yields (1,)-shaped views; float(array) is no longer allowed.
+                trans_params = np.asarray(trans_params, dtype=np.float32).reshape(-1)
                 im_t = torch.tensor(np.array(im1)/255., dtype=torch.float32).permute(2, 0, 1).to(self.device).unsqueeze(0)
                 
                 with torch.no_grad():

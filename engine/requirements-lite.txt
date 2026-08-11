@@ -1,0 +1,16 @@
+# API / tools-only engine stack (no local torch / transformers / diffusers).
+# Use this when Text Backend is Remote and you do not need local models, image gen,
+# TTS/ASR, or talking avatar. For the full local multimodal stack, install
+# requirements.txt instead (it includes this file).
+#
+# Target: Python 3.12 to 3.14
+
+openai>=1.40
+anthropic>=0.40
+huggingface_hub>=0.30,<1
+mcp>=1.27,<2
+numpy>=2.0
+asteval==1.0.9
+firecrawl-py==4.32.0
+html-to-markdown==3.8.3
+pyttsx3==2.99

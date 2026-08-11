@@ -1,0 +1,13 @@
+Context compaction was triggered because the conversation exceeded the configured token budget.
+
+Write a concise handoff summary for yourself after compaction (target well under 10K tokens).
+
+After compaction you will only see the summary plus a short recent tail of the conversation.
+
+Retain what is needed to continue: goals, decisions, open tasks, tool results that still matter, etc.
+
+Prefer clarity over length - distill the context down to key information by omitting chatter and redundant tool noise.
+
+If a prior compaction summary is present, merge anything still relevant into one updated summary.
+
+Output ONLY the handoff summary. No preamble, planning, or commentary about writing the summary.

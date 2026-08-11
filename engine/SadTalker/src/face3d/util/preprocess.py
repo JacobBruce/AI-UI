@@ -27,14 +27,16 @@ def POS(xp, x):
 
     b = np.reshape(xp.transpose(), [2*npts, 1])
 
-    k, _, _, _ = np.linalg.lstsq(A, b)
+    # NumPy 2 lstsq keeps a trailing dim when b is (N,1); ravel so t/s are scalars.
+    k, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+    k = np.asarray(k).ravel()
 
     R1 = k[0:3]
     R2 = k[4:7]
     sTx = k[3]
     sTy = k[7]
     s = (np.linalg.norm(R1) + np.linalg.norm(R2))/2
-    t = np.stack([sTx, sTy], axis=0)
+    t = np.array([sTx, sTy], dtype=np.float64)
 
     return t, s
     

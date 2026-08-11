@@ -1,7 +1,7 @@
 {
 	"MIT":[
 		{
-			"src":"https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth",
+			"src":"https://huggingface.co/camenduru/facexlib/resolve/main/s3fd-619a316812.pth",
 			"dest":"/MakeItTalk/examples/ckpt/s3fd-619a316812.pth", "extract": 0
 		},
 		{
@@ -18,11 +18,11 @@
 	],
 	"W2L":[
 		{
-			"src":"https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth",
+			"src":"https://huggingface.co/camenduru/facexlib/resolve/main/s3fd-619a316812.pth",
 			"dest":"/MakeItTalk/examples/ckpt/s3fd-619a316812.pth", "extract": 0
 		},
 		{
-			"src":"https://huggingface.co/commanderx/Wav2Lip-HD/resolve/main/checkpoints/wav2lip_gan.pth?download=true",
+			"src":"https://huggingface.co/commanderx/Wav2Lip-HD/resolve/main/checkpoints/wav2lip_gan.pth",
 			"dest":"/Wav2Lip/checkpoints/wav2lip_gan.pth", "extract": 0
 		}
 	],
@@ -42,6 +42,20 @@
 		{
 			"src":"https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth",
 			"dest":"/SadTalker/gfpgan/weights/detection_Resnet50_Final.pth", "extract": 0
+		}
+	],
+	"IMT":[
+		{
+			"src":"https://huggingface.co/cbsjtu01/IMTalker/resolve/main/generator.ckpt",
+			"dest":"/IMTalker/checkpoints/generator.ckpt", "extract": 0
+		},
+		{
+			"src":"https://huggingface.co/cbsjtu01/IMTalker/resolve/main/renderer.ckpt",
+			"dest":"/IMTalker/checkpoints/renderer.ckpt", "extract": 0
+		},
+		{
+			"src":"https://huggingface.co/cbsjtu01/IMTalker/resolve/main/wav2vec2-base-960h/pytorch_model.bin",
+			"dest":"/IMTalker/checkpoints/wav2vec2-base-960h/pytorch_model.bin", "extract": 0
 		}
 	]
 }

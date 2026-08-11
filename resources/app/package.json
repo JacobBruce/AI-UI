@@ -1,0 +1,27 @@
+{
+  "name": "AI_UI",
+  "displayName": "AI UI",
+  "version": "0.9.0",
+  "author": "Bitfreak Software",
+  "description": "AI User Interface",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:vendor": "npx esbuild vendor-entry.js --bundle --outfile=vendor.bundle.js --platform=browser --format=iife",
+    "build:app": "npx esbuild index.js --bundle --outfile=app.bundle.js --platform=browser --format=iife",
+    "postinstall": "npm run build:vendor && npm run build:app"
+  },
+  "dependencies": {
+    "@vscode/markdown-it-katex": "^1.1.2",
+    "adm-zip": "^0.6.0",
+    "highlight.js": "^11.11.1",
+    "jquery": "^4.0.0",
+    "markdown-it": "^15.0.0",
+    "markdown-it-emoji": "^3.0.0",
+    "markdown-it-footnote": "^4.0.0",
+    "markdown-it-task-lists": "^2.1.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
