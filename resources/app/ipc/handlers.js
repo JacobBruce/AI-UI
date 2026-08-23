@@ -181,26 +181,9 @@ function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getCo
 
 	function PersistMcpEnablesFromPacks(packs) {
 		if (!Array.isArray(packs)) return;
-		const home = sessions ? sessions.GetAiuiHome() : '';
-		if (!home) return;
-		let mcp = core.getMcpConfig();
-		for (const p of packs) {
-			if (!p || p.kind !== 'mcp') continue;
-			const sid = String(p.server_id || String(p.id || '').replace(/^mcp:/, '') || '').trim();
-			if (!sid) continue;
-			const upd = {
-				server_id: sid,
-				enabled: !!p.enabled,
-				name: p.name
-			};
-			if (Array.isArray(p.disabled_tools)) upd.disabled_tools = p.disabled_tools;
-			if (p.permission_mode != null || p.permissionMode != null) {
-				upd.permission_mode = p.permission_mode || p.permissionMode;
-			}
-			mcp = mcpStore.UpsertPack(mcp, upd);
-		}
-		mcp = mcpStore.SaveMcpConfig(home, mcp);
-		core.setMcpConfig(mcp);
+		const overlay = mcpStore.ExtractMcpOverlay(packs);
+		core.setMcpOverlay(overlay);
+		core.setMcpConfig(mcpStore.ApplyMcpOverlay(core.getMcpConfig(), overlay));
 	}
 
 	function PersistPackAutoAllow(packId) {
@@ -213,7 +196,6 @@ function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getCo
 				server_id: id.replace(/^mcp:/, ''),
 				permission_mode: 'auto'
 			});
-			mcp = mcpStore.SaveMcpConfig(home, mcp);
 			core.setMcpConfig(mcp);
 		} else {
 			const packs = core.buildMergedToolPacks().map((p) => {
@@ -222,6 +204,7 @@ function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getCo
 			});
 			core.configTools({ tool_packs: packs });
 		}
+		PersistScopedConfig();
 		try {
 			getWin().webContents.send('load-config', LoadConfigPayload(true));
 		} catch (err) { /* window may be gone */ }
@@ -627,7 +610,9 @@ function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getCo
 		if (!home) return { ok: false };
 		const mcp = mcpStore.LoadMcpConfig(home);
 		const warnings = mcpStore.TakeWarnings(mcp);
-		core.setMcpConfig(mcp);
+		const overlay = mcpStore.ExtractMcpOverlay(mcpStore.ServersToPacks(core.getMcpConfig()));
+		core.setMcpOverlay(overlay);
+		core.setMcpConfig(mcpStore.ApplyMcpOverlay(mcp, overlay));
 		const payload = LoadConfigPayload(true);
 		getWin().webContents.send('load-config', payload);
 		// Push updated pack list to engine without requiring APPLY.

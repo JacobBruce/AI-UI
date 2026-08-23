@@ -1,5 +1,6 @@
 """Built-in native tool packs with MCP-shaped schemas."""
 
+from . import utils_pack
 from . import math_pack
 from . import web_pack
 from . import coding_pack
@@ -7,6 +8,7 @@ from . import image_pack
 
 # Registry order is the default UI / dispatch priority.
 NATIVE_PACKS = {
+	utils_pack.PACK_ID: utils_pack,
 	math_pack.PACK_ID: math_pack,
 	web_pack.PACK_ID: web_pack,
 	coding_pack.PACK_ID: coding_pack,
@@ -15,6 +17,7 @@ NATIVE_PACKS = {
 
 def list_native_pack_defs():
 	return [
+		{"id": utils_pack.PACK_ID, "kind": "native", "name": utils_pack.PACK_NAME},
 		{"id": math_pack.PACK_ID, "kind": "native", "name": math_pack.PACK_NAME},
 		{"id": web_pack.PACK_ID, "kind": "native", "name": web_pack.PACK_NAME},
 		{"id": coding_pack.PACK_ID, "kind": "native", "name": coding_pack.PACK_NAME},

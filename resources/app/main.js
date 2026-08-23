@@ -51,13 +51,12 @@ function LoadConfig() {
 		const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
 		const rawPacks = raw.ai && raw.ai.tool_packs;
 		let mcpCfg = mcpStore.LoadMcpConfig(home);
-		if (Array.isArray(rawPacks) && rawPacks.some((p) => p && p.kind === 'mcp')) {
+		if (Array.isArray(rawPacks) && rawPacks.some((p) => p && p.kind === 'mcp' && p.command)) {
 			const migrated = mcpStore.MigrateFromToolPacks(home, rawPacks, mcpCfg);
 			mcpCfg = migrated.mcpConfig;
-			raw.ai.tool_packs = migrated.nativePacks;
 		}
-		core.setMcpConfig(mcpCfg);
 		core.setConfigs(raw);
+		core.applyMcpOverlayFromDisk(home);
 		return true;
 	} catch (err) {
 		dialog.showMessageBoxSync({ type: "error", message: "Error reading config file!" });

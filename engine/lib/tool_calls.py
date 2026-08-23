@@ -17,17 +17,99 @@ _PARAM_OPEN = re.compile(r"<parameter\s*=\s*([^>\s]+)\s*>", re.IGNORECASE)
 _PARAM_CLOSE = re.compile(r"</parameter\s*>", re.IGNORECASE)
 
 
+def _UnwrapXmlValue(raw: str) -> str:
+	"""Drop one wrapping newline after the open tag and before the close tag."""
+	s = raw or ""
+	if s.startswith("\r\n"):
+		s = s[2:]
+	elif s.startswith("\n") or s.startswith("\r"):
+		s = s[1:]
+	if s.endswith("\r\n"):
+		s = s[:-2]
+	elif s.endswith("\n") or s.endswith("\r"):
+		s = s[:-1]
+	return s
+
+
 def _CoerceArgValue(raw: str):
-	"""Keep plain strings; parse JSON literals when unambiguous."""
-	s = (raw or "").strip()
-	if not s:
-		return ""
-	if s[0] in "{[\"" or s in ("true", "false", "null") or re.fullmatch(r"-?\d+(\.\d+)?", s):
+	"""XML parameter text. Numbers / true / false / null become JSON types; else literal string.
+
+	Does not parse JSON arrays/objects here — `{`/`[` stay strings so write_file can
+	store JSON bodies. List/object params are coerced later from the tool schema.
+	"""
+	s = _UnwrapXmlValue(raw)
+	if s in ("true", "false", "null") or re.fullmatch(r"-?\d+(\.\d+)?", s):
 		try:
 			return json.loads(s)
 		except Exception:
 			pass
 	return s
+
+
+def TryParseJsonArray(raw):
+	"""If raw is a JSON array string, return that list; otherwise None."""
+	if not isinstance(raw, str):
+		return None
+	s = raw.strip()
+	if not s.startswith("["):
+		return None
+	try:
+		parsed = json.loads(s)
+	except Exception:
+		return None
+	return parsed if isinstance(parsed, list) else None
+
+
+def TryParseJsonObject(raw):
+	"""If raw is a JSON object string, return that dict; otherwise None."""
+	if not isinstance(raw, str):
+		return None
+	s = raw.strip()
+	if not s.startswith("{"):
+		return None
+	try:
+		parsed = json.loads(s)
+	except Exception:
+		return None
+	return parsed if isinstance(parsed, dict) else None
+
+
+def _SchemaTypes(prop):
+	if not isinstance(prop, dict):
+		return set()
+	t = prop.get("type")
+	if isinstance(t, str):
+		return {t}
+	if isinstance(t, (list, tuple)):
+		return {str(x) for x in t if x}
+	return set()
+
+
+def CoerceArgsToSchema(args, schema):
+	"""Turn XML JSON-array/object strings into lists/dicts when the schema says so.
+
+	String-typed properties (file bodies) are left as strings.
+	"""
+	if not isinstance(args, dict):
+		return args
+	props = (schema or {}).get("properties") if isinstance(schema, dict) else None
+	if not isinstance(props, dict):
+		return args
+	out = dict(args)
+	for key, val in args.items():
+		if not isinstance(val, str):
+			continue
+		types = _SchemaTypes(props.get(key))
+		if "array" in types:
+			parsed = TryParseJsonArray(val)
+			if parsed is not None:
+				out[key] = parsed
+				continue
+		if "object" in types:
+			parsed = TryParseJsonObject(val)
+			if parsed is not None:
+				out[key] = parsed
+	return out
 
 
 def _NormalizeOne(obj) -> dict | None:
@@ -90,17 +172,19 @@ def ParseXmlFunctions(raw: str) -> list[dict]:
 
 
 def ParseToolCallInner(raw: str) -> list[dict]:
-	"""Normalize one <tool_call>…</tool_call> body to a list of calls."""
+	"""Normalize one <tool_call>…</tool_call> body to a list of calls.
+
+	Form is the first non-whitespace character: `{`/`[` JSON, `<` XML.
+	"""
 	text = (raw or "").strip()
 	if not text:
 		return []
 
-	# JSON object or array
 	if text[0] in "{[":
 		try:
 			data = json.loads(text)
 		except Exception:
-			data = None
+			return []
 		if isinstance(data, dict):
 			one = _NormalizeOne(data)
 			return [one] if one else []
@@ -111,9 +195,9 @@ def ParseToolCallInner(raw: str) -> list[dict]:
 				if one:
 					out.append(one)
 			return out
+		return []
 
-	# XML function=/parameter=
-	if "<function" in text.lower():
+	if text[0] == "<":
 		return ParseXmlFunctions(text)
 
 	return []

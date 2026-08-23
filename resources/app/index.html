@@ -185,16 +185,16 @@
 									stroke-linecap="butt" transform="rotate(-90 32 32)" stroke-dasharray="163.36281798666926" stroke-dashoffset="163.36281798666926"></circle>
 							</svg>
 						</button>
-						<div id="ctx_usage_tip" class="hidden" role="tooltip">
-							<div id="ctx_usage_tip_body"></div>
-							<button id="ctx_compact_btn" class="btn" type="button" onclick="CompactNow(event)">MANUAL COMPACT</button>
-						</div>
 						<button id="mic_btn" onclick="ToggleRecordBox()" disabled><img src="./img/microphone.png" width="20" /></button>
 						<button id="attach_btn" onclick="ToggleAttachBox()" disabled><img src="./img/attach.png" width="20" /></button>
 						<button id="exp_btn" onclick="ToggleMsgBox()"><img src="./img/expand.png" width="20" /></button>
 						<div id="butt_box">
 							<button id="send_btn" class="btn chat_btn" onclick="SendMsg()" disabled>SEND</button><button id="redo_btn" class="btn chat_btn" onclick="RedoLast()" disabled>REDO</button><button id="cont_btn" class="btn chat_btn" onclick="ContChat()" disabled>CONT</button>
 						</div>
+					</div>
+					<div id="ctx_usage_tip" class="hidden" role="tooltip">
+						<div id="ctx_usage_tip_body"></div>
+						<button id="ctx_compact_btn" class="btn" type="button" onclick="CompactNow(event)">MANUAL COMPACT</button>
 					</div>
 					<div id="input_dialog" class="text_dialog hidden">
 						<div id="in_dialog_head" class="dialog_head">USER INPUT</div>
@@ -275,14 +275,21 @@
 								<option value="1">Permanent</option>
 								<option value="2">No Prompt</option>
 							</select>
-							<span class="cfg_lbl">Max Message Memory <img class="help_icon" width="16" height="16" title="Used when Compact at is 0 (compaction off). Number of recent messages kept in the model context. Higher values increase memory and latency." /></span>
+							<span class="cfg_lbl">Max Message Memory <img class="help_icon" width="16" height="16" title="Used when Context Token Budget is 0 (compaction off). Number of recent messages kept in the model context. Higher values increase memory and latency." /></span>
 							<input type="number" id="max_msg_mem" class="cfg_num" min="2" max="10000" value="10">
 							<span class="cfg_lbl">Context Token Budget <img class="help_icon" width="16" height="16" title="When prompt tokens reach this budget (or Max Response Length no longer fits under it), the context is compacted into a summary (plus recent tail). Set to 0 to disable compaction and use Max Message Memory instead. Optional override: ~/.aiui/compact_prompt.txt" /></span>
 							<input type="number" id="compact_at" class="cfg_num" min="0" max="2000000" step="1000" value="0">
-							<span class="cfg_lbl">Compact Recent Tail <img class="help_icon" width="16" height="16" title="After compaction, keep roughly this many tokens of the latest user turn and following replies verbatim (in addition to the summary)." /></span>
+							<span class="cfg_lbl">Compact Recent Tail <img class="help_icon" width="16" height="16" title="After compaction, keep roughly this many tokens of recent conversation verbatim (in addition to the summary). The last user message is always kept in full, even if it is larger than this. Until the first compaction, the full chat is sent." /></span>
 							<input type="number" id="compact_tail_tokens" class="cfg_num" min="256" max="100000" step="256" value="8000">
 							<span class="cfg_lbl">Compact Summary Max <img class="help_icon" width="16" height="16" title="Max tokens for the summarization side-call when compaction runs. Independent of Max Response Length, which only applies to normal chat replies." /></span>
 							<input type="number" id="compact_summary_max" class="cfg_num" min="256" max="32000" step="256" value="8192">
+							<span class="cfg_lbl">Git Working Tree <img class="help_icon" width="16" height="16" title="When a project is a git repo, each user turn appends a short git status (uncommitted and untracked files) to the last user message so the agent can see what is already dirty. Not stored in the chat. Off when there is no project, the tree is clean, or this is False." /></span>
+							<select id="git_status_context" class="cfg_drp">
+								<option value="0" selected>False</option>
+								<option value="1">True</option>
+							</select>
+							<span class="cfg_lbl">Max Tool Result Length <img class="help_icon" width="16" height="16" title="Maximum characters kept from each tool result (native or MCP) before it is stored in the chat. Default 4000000. Does not raise native file-read or command output caps." /></span>
+							<input type="number" id="max_tool_res_len" class="cfg_num" min="1000" max="100000000" step="1000" value="4000000">
 							<span class="cfg_lbl">Max Response Length <img class="help_icon" width="16" height="16" title="The maximum number of tokens to generate in each response. On remote APIs with thinking enabled, reasoning counts toward this budget too. A token is like a word but spaces and other symbols may also count." /></span>
 							<input type="number" id="max_res_len" class="cfg_num" min="1" max="100000" value="32000">
 							<span class="cfg_lbl">Min Response Length <img class="help_icon" width="16" height="16" title="The minimum number of tokens to generate in each response. A token is like a word but spaces and other symbols may be considered a token." /></span>
@@ -669,7 +676,7 @@
 								<option value="openai" selected>OpenAI</option>
 								<option value="anthropic">Anthropic</option>
 							</select>
-							<span class="cfg_lbl">Prompt Cache <img class="help_icon" width="16" height="16" title="When Remote Protocol is Anthropic, send cache_control type ephemeral so stable prompt prefixes can be reused across turns (default on). Ignored for OpenAI protocol." /></span>
+							<span class="cfg_lbl">Prompt Caching <img class="help_icon" width="16" height="16" title="When on, send cache_control type ephemeral so Anthropic (Messages API) and OpenRouter (Claude and other explicit-cache models) can reuse stable prompt prefixes across turns. Default on." /></span>
 							<select id="remote_prompt_cache" class="cfg_drp">
 								<option value="1" selected>True</option>
 								<option value="0">False</option>

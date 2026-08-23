@@ -486,6 +486,10 @@ def MessagesForRemote():
 		# Anthropic wire continuity (thinking signatures / tool_use ids)
 		if "_anthropic_content" in m and m.get("_anthropic_content") is not None:
 			item["_anthropic_content"] = m["_anthropic_content"]
+		if "_reasoning_details" in m and m.get("_reasoning_details") is not None:
+			item["_reasoning_details"] = m["_reasoning_details"]
+		if "_reasoning_pin" in m and m.get("_reasoning_pin") is not None:
+			item["_reasoning_pin"] = m["_reasoning_pin"]
 		out.append(item)
 	return out
 
@@ -521,6 +525,7 @@ def BuildRemoteChatPayload(model_id, messages, temperature, max_tokens, stream=T
 	from lib import remote_tools
 	remote_tools.ApplyOpenAIThinkingFields(payload)
 	remote_tools.ApplyOpenAIToolFields(payload)
+	remote_tools.ApplyOpenAICacheFields(payload)
 	return payload
 
 
@@ -586,6 +591,10 @@ def _DeltaFromPayload(obj, think_state=None):
 		reasoning = delta.get("reasoning_content")
 		if reasoning is None:
 			reasoning = delta.get("reasoning")
+		if not (isinstance(reasoning, str) and reasoning.strip()):
+			from lib import remote_tools
+			extra = remote_tools.ReasoningTextFromDetails(delta.get("reasoning_details"))
+			reasoning = extra or None
 		text = _CombineDeltaParts(
 			content if isinstance(content, str) else None,
 			reasoning if isinstance(reasoning, str) else None,
@@ -599,6 +608,10 @@ def _DeltaFromPayload(obj, think_state=None):
 		reasoning = msg.get("reasoning_content")
 		if reasoning is None:
 			reasoning = msg.get("reasoning")
+		if not (isinstance(reasoning, str) and reasoning.strip()):
+			from lib import remote_tools
+			extra = remote_tools.ReasoningTextFromDetails(msg.get("reasoning_details"))
+			reasoning = extra or None
 		return _CombineDeltaParts(
 			content if isinstance(content, str) else None,
 			reasoning if isinstance(reasoning, str) else None,
@@ -635,22 +648,42 @@ def _ConsumeSseEvent(line, ipc, think_state):
 	if obj.get("error") is not None:
 		raise RemoteStreamServerError(_FormatRemoteError(obj.get("error")))
 	usage = obj.get("usage")
+	route_model = obj.get("model") if isinstance(obj.get("model"), str) else None
+	route_provider = obj.get("provider") if isinstance(obj.get("provider"), str) else None
 	choices = obj.get("choices") or []
 	if not choices:
 		# OpenAI include_usage final chunk often has empty choices + usage only.
-		if usage:
-			return {"text": "", "tool_calls": None, "finish_reason": None, "usage": usage}
+		if usage or route_model or route_provider:
+			return {
+				"text": "",
+				"tool_calls": None,
+				"finish_reason": None,
+				"usage": usage,
+				"reasoning_details": None,
+				"model": route_model,
+				"provider": route_provider,
+			}
 		return None
 	choice0 = choices[0] if isinstance(choices[0], dict) else {}
 	delta = choice0.get("delta") or {}
 	if not isinstance(delta, dict):
 		delta = {}
 	text = _DeltaFromPayload(obj, think_state)
+	details = None
+	if isinstance(delta, dict):
+		details = delta.get("reasoning_details")
+	if not details:
+		msg = choice0.get("message") or {}
+		if isinstance(msg, dict):
+			details = msg.get("reasoning_details")
 	return {
 		"text": text or "",
 		"tool_calls": delta.get("tool_calls"),
 		"finish_reason": choice0.get("finish_reason"),
 		"usage": usage,
+		"reasoning_details": details,
+		"model": route_model,
+		"provider": route_provider,
 	}
 
 
@@ -716,6 +749,22 @@ def _FlushOpenAIToolCalls(state, want_ui, on_block, block_ends, ipc):
 	return True
 
 
+def _RememberStreamRoute(state, model=None, provider=None):
+	"""Keep a resolved OpenRouter model if a later chunk repeats the auto id."""
+	from lib import remote_tools
+
+	if isinstance(model, str) and model.strip():
+		prev = state.get("route_model")
+		if (
+			not prev
+			or remote_tools.IsOpenRouterAutoModel(prev)
+			or not remote_tools.IsOpenRouterAutoModel(model)
+		):
+			state["route_model"] = model
+	if isinstance(provider, str) and provider.strip():
+		state["route_provider"] = provider
+
+
 def _ApplyStreamEvent(evt, state, want_ui, on_block, block_ends, ipc):
 	"""Handle one parsed stream event. Returns 'continue' or a stop action."""
 	from lib import remote_tools
@@ -725,6 +774,12 @@ def _ApplyStreamEvent(evt, state, want_ui, on_block, block_ends, ipc):
 		return "continue"
 	if evt.get("usage") is not None:
 		context_compact.RecordRemoteUsage(evt.get("usage"))
+	_RememberStreamRoute(state, evt.get("model"), evt.get("provider"))
+	rds = evt.get("reasoning_details")
+	if rds:
+		acc = state.setdefault("reasoning_acc", [])
+		remote_tools.AccumulateReasoningDetails(acc, rds)
+		state["reasoning_acc"] = acc
 	text = evt.get("text") or ""
 	if text:
 		action = _HandleDelta(text, state, want_ui, on_block, block_ends, ipc)
@@ -752,6 +807,7 @@ def _StreamViaOpenAI(client, create_kw, state, want_ui, on_block, block_ends, ip
 		with client.chat.completions.with_streaming_response.create(**kw) as resp:
 			_SetActiveCloser(lambda r=resp: r.close())
 			try:
+				tool_stop = False
 				for line in resp.iter_lines():
 					if state["cancel"].is_set() or ipc.StopRequested():
 						state["stopped"] = True
@@ -766,7 +822,16 @@ def _StreamViaOpenAI(client, create_kw, state, want_ui, on_block, block_ends, ip
 						break
 					if not evt:
 						continue
+					if tool_stop:
+						if evt.get("usage") is not None:
+							from lib import context_compact
+							context_compact.RecordRemoteUsage(evt.get("usage"))
+						_RememberStreamRoute(state, evt.get("model"), evt.get("provider"))
+						continue
 					action = _ApplyStreamEvent(evt, state, want_ui, on_block, block_ends, ipc)
+					if action == "tool_stop":
+						tool_stop = True
+						continue
 					if action != "continue":
 						break
 				if state.get("oai_tools") and state.get("tool_acc"):
@@ -788,15 +853,41 @@ def _StreamViaOpenAI(client, create_kw, state, want_ui, on_block, block_ends, ip
 		else:
 			raise
 	finally:
-		_CloseOpenThink(state, want_ui, on_block, block_ends, ipc)
+		_FinalizeOpenThink(state, want_ui, ipc)
+		_StoreOpenAIReasoningSidecar(state)
 		_SetActiveCloser(None)
 
 
 def _CloseOpenThink(state, want_ui, on_block, block_ends, ipc):
+	"""Close a synthetic think wrapper. Does not go through `_HandleDelta`.
+
+	Stop sets cancel before this runs; `_HandleDelta` would skip the close tag.
+	`on_block` / `block_ends` are unused (kept so flush call sites stay the same).
+	"""
+	del on_block, block_ends
 	if not state["think"].get("open"):
 		return
 	state["think"]["open"] = False
-	_HandleDelta("\n</think>\n\n", state, want_ui, on_block, block_ends, ipc)
+	delta = "\n</think>\n\n".replace("\n", "[AI_UI_BR]")
+	state["gen_text"] += delta
+	if want_ui:
+		ipc.SendStreamDelta(delta, "chat")
+
+
+def _FinalizeOpenThink(state, want_ui, ipc):
+	"""End-of-stream: unwrap a think-only reply, else close the wrapper."""
+	if not state["think"].get("open"):
+		return
+	from lib.files import CloseOrUnwrapOpenThink
+
+	state["think"]["open"] = False
+	plain = state["gen_text"].replace("[AI_UI_BR]", "\n")
+	new = CloseOrUnwrapOpenThink(plain)
+	state["gen_text"] = new.replace("\n", "[AI_UI_BR]")
+	if want_ui and new.startswith(plain) and len(new) > len(plain):
+		delta = new[len(plain):].replace("\n", "[AI_UI_BR]").replace("\r", "")
+		if delta:
+			ipc.SendStreamDelta(delta, "chat")
 
 
 def _AnthropicApiKey():
@@ -1002,7 +1093,7 @@ def _StreamViaAnthropic(create_kw, state, want_ui, on_block, block_ends, ipc):
 			else:
 				raise
 	finally:
-		_CloseOpenThink(state, want_ui, on_block, block_ends, ipc)
+		_FinalizeOpenThink(state, want_ui, ipc)
 		_SetActiveCloser(None)
 		_close_stream()
 
@@ -1033,23 +1124,85 @@ def _NonStreamViaAnthropic(create_kw, state, want_ui, ipc):
 			if t:
 				parts.append(_CombineDeltaParts(t, None, think_state))
 	state["gen_text"] = "".join(parts)
-	if think_state.get("open"):
-		think_state["open"] = False
-		state["gen_text"] += "\n</think>\n\n"
 	calls = remote_tools.ToolUseFromContentBlocks(content_blocks)
 	if calls:
+		_CloseOpenThink(state, False, None, (), ipc)
 		state["gen_text"] = remote_tools.AppendToolCallsXml(state["gen_text"], calls)
+	else:
+		_FinalizeOpenThink(state, False, ipc)
 	if want_ui and state["gen_text"]:
 		ipc.SendStreamDelta(state["gen_text"].replace("\n", "[AI_UI_BR]").replace("\r", ""), "chat")
 
 
+def _RouteMetaFromResponse(resp):
+	"""Resolved model/provider from a non-stream OpenAI/OpenRouter completion."""
+	from lib import remote_tools
+
+	model = getattr(resp, "model", None)
+	provider = getattr(resp, "provider", None)
+	extra = getattr(resp, "model_extra", None)
+	if isinstance(extra, dict):
+		if not model:
+			model = extra.get("model")
+		if not provider:
+			provider = extra.get("provider")
+	dump = remote_tools.SdkModelDump(resp)
+	if isinstance(dump, dict):
+		if not model:
+			model = dump.get("model")
+		if not provider:
+			provider = dump.get("provider")
+	if isinstance(resp, dict):
+		if not model:
+			model = resp.get("model")
+		if not provider:
+			provider = resp.get("provider")
+	model = model if isinstance(model, str) and model.strip() else None
+	provider = provider if isinstance(provider, str) and provider.strip() else None
+	return model, provider
+
+
+def _StoreOpenAIReasoningSidecar(state):
+	from lib import remote_tools
+
+	details = remote_tools.FinalizeReasoningDetails(state.get("reasoning_acc"))
+	E._openai_last_reasoning_details = details
+	pin = remote_tools.ReasoningPinFromDetails(
+		details,
+		model=state.get("route_model"),
+		provider=state.get("route_provider"),
+	)
+	E._openai_last_reasoning_pin = pin
+
+
 def _CreateKwForOpenAI(create_kw):
-	"""OpenAI SDK: merge extra_body; non-empty chat_template_kwargs go under extra_body."""
+	"""OpenAI SDK: merge extra_body; serve-only chat_template_kwargs go under extra_body.
+
+	OpenRouter reasoning_details is not a typed Chat Completions field — the SDK
+	strips it from `messages`, so copy the mapped list into extra_body (OpenRouter
+	only; openai.com rejects unknown message keys). Same for cache_control.
+	"""
 	kw = dict(create_kw)
 	extra = dict(kw.get("extra_body") or {})
 	ct = kw.pop("chat_template_kwargs", None)
 	if isinstance(ct, dict) and ct:
 		extra["chat_template_kwargs"] = ct
+	cc = kw.pop("cache_control", None)
+	if cc is not None and _IsOpenRouterBase(_ResolveOpenAIBaseUrl()):
+		extra["cache_control"] = cc
+	msgs = kw.get("messages")
+	if isinstance(msgs, list):
+		public = [
+			{k: v for k, v in m.items() if not str(k).startswith("_")}
+			if isinstance(m, dict) else m
+			for m in msgs
+		]
+		kw["messages"] = public
+		if (
+			_IsOpenRouterBase(_ResolveOpenAIBaseUrl())
+			and any(isinstance(m, dict) and m.get("reasoning_details") for m in public)
+		):
+			extra["messages"] = public
 	if extra:
 		kw["extra_body"] = extra
 	elif "extra_body" in kw:
@@ -1084,6 +1237,8 @@ def RemoteChatReply(temperature=None, stream=True, ui_stream=True, on_block=None
 
 	# Clear prior sidecar unless this round reuses it via messages
 	E._anthropic_last_content = None
+	E._openai_last_reasoning_details = None
+	E._openai_last_reasoning_pin = None
 
 	ant_tools = remote_tools.IsAnthropicTools()
 	oai_tools = remote_tools.IsOpenAITools()
@@ -1100,7 +1255,10 @@ def RemoteChatReply(temperature=None, stream=True, ui_stream=True, on_block=None
 				"(transcript may be empty or all turns were filtered)."
 			)
 	elif oai_tools:
-		messages = remote_tools.MapMessagesOpenAI(messages)
+		messages = remote_tools.MapMessagesOpenAI(
+			messages,
+			replay_reasoning=_IsOpenRouterBase(_ResolveOpenAIBaseUrl()),
+		)
 
 	temp = float(E.rando_lvl if temperature is None else temperature)
 	max_tokens = int(getattr(E, "gen_max", 32000) or 32000)
@@ -1118,6 +1276,9 @@ def RemoteChatReply(temperature=None, stream=True, ui_stream=True, on_block=None
 		"xml_tool_stop": False,
 		"oai_tools": oai_tools,
 		"ant_tools": ant_tools,
+		"reasoning_acc": [],
+		"route_model": None,
+		"route_provider": None,
 		"tool_acc": (
 			remote_tools.NewAnthropicToolUseAcc() if ant_tools
 			else (remote_tools.NewOpenAIToolCallAcc() if oai_tools else None)
@@ -1162,6 +1323,8 @@ def RemoteChatReply(temperature=None, stream=True, ui_stream=True, on_block=None
 		create_kw = BuildRemoteChatPayload(
 			wire_model, messages, temp, max_tokens, stream=want_stream,
 		)
+		if _IsOpenRouterBase(_ResolveOpenAIBaseUrl()):
+			create_kw = remote_tools.ApplyReasoningRoutePin(create_kw)
 		client = _BuildOpenAIClient()
 
 		if not want_stream:
@@ -1170,21 +1333,30 @@ def RemoteChatReply(temperature=None, stream=True, ui_stream=True, on_block=None
 				from lib import context_compact
 				context_compact.RecordRemoteUsage(getattr(resp, "usage", None))
 				msg = resp.choices[0].message
+				rm, rp = _RouteMetaFromResponse(resp)
+				_RememberStreamRoute(state, rm, rp)
 				content = getattr(msg, "content", None)
 				reasoning = getattr(msg, "reasoning_content", None)
 				if reasoning is None:
 					reasoning = getattr(msg, "reasoning", None)
+				details = remote_tools.ReasoningDetailsFromMessage(msg)
+				if details:
+					state["reasoning_acc"] = list(details)
+				if not (isinstance(reasoning, str) and reasoning.strip()) and details:
+					reasoning = remote_tools.ReasoningTextFromDetails(details) or reasoning
 				# Older servers: content only. Newer: optional reasoning_content.
 				state["gen_text"] = _CombineDeltaParts(
 					content if isinstance(content, str) else None,
 					reasoning if isinstance(reasoning, str) else None,
 					state["think"],
 				)
-				_CloseOpenThink(state, False, None, (), ipc)
 				if oai_tools:
 					calls = remote_tools.ToolCallsFromMessage(msg)
 					if calls:
+						_CloseOpenThink(state, False, None, (), ipc)
 						state["gen_text"] = remote_tools.AppendToolCallsXml(state["gen_text"], calls)
+				_FinalizeOpenThink(state, False, ipc)
+				_StoreOpenAIReasoningSidecar(state)
 			except (IndexError, AttributeError, TypeError) as e:
 				ipc.LogErr(f"WARN: remote non-stream parse failed ({e})")
 				raise RuntimeError(f"Remote reply could not be parsed ({e})") from e

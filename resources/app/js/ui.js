@@ -25,8 +25,6 @@ export {
 	ReloadPromptFromFiles, OnAgentChanged, ShowPromptChip, RefreshPrompt
 };
 
-export const default_ip = "Chat session started on DATE";
-
 export function NormTempFormat(raw) {
 	const t = String(raw || 'none').trim().toLowerCase();
 	if (t === 'tool') return 'aiui';
@@ -355,6 +353,7 @@ export function ApplySettings() {
 export function ApplyConfig() {
 	if (state.config_state == 1) {
 		const maxmm = $('#max_msg_mem').val();
+		const maxtrl = $('#max_tool_res_len').val();
 		const maxrl = $('#max_res_len').val();
 		const minrl = $('#min_res_len').val();
 		const numbm = $('#num_beams').val();
@@ -369,6 +368,7 @@ export function ApplyConfig() {
 		const compactAt = $('#compact_at').val();
 		const compactTail = $('#compact_tail_tokens').val();
 		const compactSumMax = $('#compact_summary_max').val();
+		const gitStatusCtx = $('#git_status_context').find(':selected').val();
 		const dosmp = $('#ds_select').find(':selected').val();
 		const promptp = $('#pp_select').find(':selected').val();
 		const tempf = $('#template_select').find(':selected').val();
@@ -383,21 +383,23 @@ export function ApplyConfig() {
 			});
 			return;
 		}
-		if (state.max_mm != maxmm || state.max_rl != maxrl || state.min_rl != minrl || state.b_temp != btemp ||
+		if (state.max_mm != maxmm || state.max_tool_result != maxtrl || state.max_rl != maxrl || state.min_rl != minrl || state.b_temp != btemp ||
 		state.do_sample != dosmp || state.num_beams != numbm || state.beam_groups != numbg ||
 		topk != state.top_k || topp != state.top_p || typp != state.typical_p || repp != state.rep_penalty ||
 		freqp != state.frequency_penalty || presp != state.presence_penalty ||
 		compactAt != state.compact_at || compactTail != state.compact_tail_tokens || compactSumMax != state.compact_summary_max ||
+		gitStatusCtx != String(Number(state.git_status_context) ? 1 : 0) ||
 		state.prompt_p != promptp || state.temp_format != tempf ||
 		state.enable_thinking != ethink || state.reasoning_effort != reffort) {
 			ipcRenderer.send('config-ai', {
-				max_mmem: maxmm, max_rlen: maxrl, min_rlen: minrl,
+				max_mmem: maxmm, max_tool_result: maxtrl, max_rlen: maxrl, min_rlen: minrl,
 				do_sample: dosmp, num_beams: numbm, beam_groups: numbg,
 				temp: btemp, tk: topk, tp: topp, typ: typp, rp: repp, pp: promptp,
 				fp: freqp, prp: presp,
 				compact_at: compactAt,
 				compact_tail_tokens: compactTail,
 				compact_summary_max: compactSumMax,
+				git_status_context: gitStatusCtx,
 				temp_format: tempf,
 				enable_thinking: ethink,
 				reasoning_effort: reffort
@@ -410,7 +412,9 @@ export function ApplyConfig() {
 			state.compact_at = compactAt;
 			state.compact_tail_tokens = compactTail;
 			state.compact_summary_max = compactSumMax;
+			state.git_status_context = Number(gitStatusCtx) ? 1 : 0;
 			state.max_mm = maxmm;
+			state.max_tool_result = maxtrl;
 			state.max_rl = maxrl;
 			state.min_rl = minrl;
 			state.b_temp = btemp;
@@ -709,16 +713,13 @@ export function InitUi() {
 
 	ipcRenderer.on('init-ui', (event, payload) => {
 		if (payload.state !== false) {
-			const d = new Date();
-			const curr_date = (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
-			const def_ip = default_ip.replaceAll('DATE', () => curr_date);
 			if (payload.state == 'AI_UI_DEFAULT') {
-				// Keep an already-composed / restored prompt; only use the dated stub when empty.
-				if (!state.prompt || !String(state.prompt).trim()) state.prompt = def_ip;
+				// Keep an already-composed / restored prompt; files compose fills an empty one.
+				if (state.prompt && String(state.prompt).trim()) RefreshPrompt(state.prompt);
 			} else {
 				state.prompt = payload.state.replaceAll("[AI_UI_BR]", "\n");
+				RefreshPrompt(state.prompt);
 			}
-			RefreshPrompt(state.prompt);
 			// Engine is up - restore workspace label. Do not wipe gen/tts/img results
 			// (those panes are for generation output, not engine lifecycle status).
 			ClearEngineStatus();
@@ -1007,6 +1008,7 @@ export function InitUi() {
 		if (app_config.enabled_skills) state.enabled_skills = app_config.enabled_skills;
 
 		state.max_mm = ai_config.msg_mem;
+		state.max_tool_result = ai_config.max_tool_result ?? 4000000;
 		state.max_rl = ai_config.max_res;
 		state.min_rl = ai_config.min_res;
 		state.do_sample = ai_config.do_sample;
@@ -1023,6 +1025,7 @@ export function InitUi() {
 		state.compact_at = ai_config.compact_at ?? 0;
 		state.compact_tail_tokens = ai_config.compact_tail_tokens ?? 8000;
 		state.compact_summary_max = ai_config.compact_summary_max ?? 8192;
+		state.git_status_context = Number(ai_config.git_status_context) ? 1 : 0;
 		state.temp_format = NormTempFormat(ai_config.temp_format);
 		state.enable_thinking = String(ai_config.enable_thinking || 'auto');
 		state.reasoning_effort = NormReasoningEffort(ai_config.reasoning_effort);
@@ -1090,6 +1093,7 @@ export function InitUi() {
 		$('#remote_prompt_cache').val(String((Number(state.remote_prompt_cache) === 0) ? 0 : 1));
 
 		$('#max_msg_mem').val(state.max_mm);
+		$('#max_tool_res_len').val(state.max_tool_result ?? 4000000);
 		$('#max_res_len').val(state.max_rl);
 		$('#min_res_len').val(state.min_rl);
 		$('#ds_select').val(state.do_sample);
@@ -1106,6 +1110,7 @@ export function InitUi() {
 		$('#compact_at').val(state.compact_at ?? 0);
 		$('#compact_tail_tokens').val(state.compact_tail_tokens ?? 8000);
 		$('#compact_summary_max').val(state.compact_summary_max ?? 8192);
+		$('#git_status_context').val(Number(state.git_status_context) ? 1 : 0);
 		UpdateContextUsage({
 			used: state.ctx_used || 0,
 			limit: Number(state.compact_at) || 0,

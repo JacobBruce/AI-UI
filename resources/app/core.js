@@ -1,9 +1,9 @@
 var CHAT_CONFIG = { human_name: 'Human', bot_name: 'Bot', bot_voice: 0, speech_vol: 1.0, speech_rate: 200, pitch_shift: 0, talk_mode: 0, tts_mode: 0, anim_mode: -1 };
 var AI_CONFIG = {
-	msg_mem: 10, max_res: 32000, min_res: 1, do_sample: 1, num_beams: 1, beam_groups: 1, base_temp: 0.8, prompt_p: 0,
+	msg_mem: 10, max_res: 32000, max_tool_result: 4000000, min_res: 1, do_sample: 1, num_beams: 1, beam_groups: 1, base_temp: 0.8, prompt_p: 0,
 	top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0,
 	frequency_penalty: 0, presence_penalty: 0,
-	compact_at: 0, compact_tail_tokens: 8000, compact_summary_max: 8192,
+	compact_at: 0, compact_tail_tokens: 8000, compact_summary_max: 8192, git_status_context: 0,
 	temp_format: 'none',
 	enable_thinking: 'auto', reasoning_effort: 'auto',
 	tools_file: 'custom', tool_packs: null, firecrawl_api_key: ''
@@ -11,9 +11,11 @@ var AI_CONFIG = {
 
 /** Installed MCP servers from ~/.aiui/mcp.json (not written into config.json). */
 var MCP_CONFIG = { mcpServers: {} };
+var MCP_OVERLAY = [];
 
 function DefaultNativePacks() {
 	return [
+		{ id: 'native:utils', kind: 'native', name: 'Utils', enabled: true, disabled_tools: [], permission_mode: 'auto' },
 		{ id: 'native:math', kind: 'native', name: 'Math', enabled: true, disabled_tools: [], permission_mode: 'ask' },
 		{ id: 'native:web', kind: 'native', name: 'Web', enabled: true, disabled_tools: [], permission_mode: 'ask' },
 		{
@@ -104,7 +106,7 @@ function NormalizeNativePacks(packs, tools_file) {
 		const out = Object.assign({}, p, {
 			enabled: prev ? prev.enabled : p.enabled,
 			disabled_tools: prev ? prev.disabled_tools : (p.disabled_tools || []),
-			permission_mode: prev ? prev.permission_mode : 'ask',
+			permission_mode: prev ? prev.permission_mode : NormalizePermissionMode(p.permission_mode),
 			disabled_defaults_applied: prev
 				? (prev.disabled_defaults_applied || [])
 				: (p.disabled_defaults_applied || [])
@@ -123,6 +125,22 @@ function SetMcpConfig(cfg) {
 
 function GetMcpConfig() {
 	return MCP_CONFIG;
+}
+
+function GetMcpOverlay() {
+	return MCP_OVERLAY.slice();
+}
+
+function SetMcpOverlay(overlay) {
+	MCP_OVERLAY = Array.isArray(overlay) ? overlay.slice() : [];
+}
+
+function ApplyMcpOverlayFromDisk(aiuiHome) {
+	const mcpStore = require('./mcp_store.js');
+	const home = String(aiuiHome || '');
+	if (!home) return;
+	const disk = mcpStore.LoadMcpConfig(home);
+	MCP_CONFIG = mcpStore.ApplyMcpOverlay(disk, MCP_OVERLAY);
 }
 
 function BuildMergedToolPacks() {
@@ -157,9 +175,11 @@ var TTS_TEXT = '';
 var CHAT_FILES = [];
 
 function GetConfigs() {
-	// Persist only native pack enables in config.json - MCP lives in mcp.json.
+	const mcpStore = require('./mcp_store.js');
+	const native = NormalizeNativePacks(AI_CONFIG.tool_packs, AI_CONFIG.tools_file);
+	const mcpOverlay = mcpStore.ExtractMcpOverlay(mcpStore.ServersToPacks(MCP_CONFIG));
 	const ai = Object.assign({}, AI_CONFIG, {
-		tool_packs: NormalizeNativePacks(AI_CONFIG.tool_packs, AI_CONFIG.tools_file)
+		tool_packs: native.concat(mcpOverlay)
 	});
 	return { chat: CHAT_CONFIG, app: APP_CONFIG, ai: ai, gen: GEN_CONFIG };
 }
@@ -180,10 +200,19 @@ function SetConfigs(configs) {
 		if (configs.ai && configs.ai.hasOwnProperty(prop))
 			AI_CONFIG[prop] = configs.ai[prop];
 	}
+	if (configs.ai && Array.isArray(configs.ai.tool_packs)) {
+		const mcpStore = require('./mcp_store.js');
+		MCP_OVERLAY = mcpStore.ExtractMcpOverlay(configs.ai.tool_packs);
+	} else {
+		MCP_OVERLAY = [];
+	}
 	if (AI_CONFIG.tools_file == 'roleplay') AI_CONFIG.tools_file = 'custom';
 	AI_CONFIG.tool_packs = NormalizeNativePacks(AI_CONFIG.tool_packs, AI_CONFIG.tools_file);
 	if (!AI_CONFIG.firecrawl_api_key) AI_CONFIG.firecrawl_api_key = '';
 	AI_CONFIG.reasoning_effort = NormReasoningEffort(AI_CONFIG.reasoning_effort);
+	AI_CONFIG.git_status_context = Number(AI_CONFIG.git_status_context) ? 1 : 0;
+	const mtr = Number(AI_CONFIG.max_tool_result);
+	AI_CONFIG.max_tool_result = (Number.isFinite(mtr) && mtr >= 1) ? Math.floor(mtr) : 4000000;
 	APP_CONFIG.remote_tool_format = NormRemoteToolFormat(APP_CONFIG.remote_tool_format);
 	APP_CONFIG.text_backend = (String(APP_CONFIG.text_backend || 'local') === 'remote') ? 'remote' : 'local';
 	if (APP_CONFIG.remote_prompt_cache == null || APP_CONFIG.remote_prompt_cache === '') {
@@ -308,9 +337,14 @@ function ConfigAI(ai_config) {
 	if (ai_config.hasOwnProperty('compact_at')) AI_CONFIG.compact_at = Number(ai_config.compact_at);
 	if (ai_config.hasOwnProperty('compact_tail_tokens')) AI_CONFIG.compact_tail_tokens = Number(ai_config.compact_tail_tokens);
 	if (ai_config.hasOwnProperty('compact_summary_max')) AI_CONFIG.compact_summary_max = Number(ai_config.compact_summary_max);
+	if (ai_config.hasOwnProperty('git_status_context')) AI_CONFIG.git_status_context = Number(ai_config.git_status_context) ? 1 : 0;
 	if (ai_config.hasOwnProperty('temp_format')) AI_CONFIG.temp_format = NormTempFormat(ai_config.temp_format);
 	if (ai_config.hasOwnProperty('enable_thinking')) AI_CONFIG.enable_thinking = String(ai_config.enable_thinking || 'auto');
 	if (ai_config.hasOwnProperty('reasoning_effort')) AI_CONFIG.reasoning_effort = NormReasoningEffort(ai_config.reasoning_effort);
+	if (ai_config.hasOwnProperty('max_tool_result')) {
+		const n = Number(ai_config.max_tool_result);
+		AI_CONFIG.max_tool_result = (Number.isFinite(n) && n >= 1) ? Math.floor(n) : 4000000;
+	}
 }
 
 function ConfigApp(app_config) {
@@ -443,6 +477,7 @@ function BuildBootConfig() {
 			remote_prompt_cache: (Number(APP_CONFIG.remote_prompt_cache) === 0) ? 0 : 1,
 			mm_processor: APP_CONFIG.mm_processor || 'auto',
 			aiui_home: aiui_home,
+			app_version: app.getVersion(),
 			workspace: APP_CONFIG.workspace || '',
 			agent: APP_CONFIG.agent || '',
 			enabled_rules: APP_CONFIG.enabled_rules,
@@ -457,6 +492,7 @@ function BuildBootConfig() {
 		ai: {
 			msg_mem: AI_CONFIG.msg_mem,
 			gen_max: AI_CONFIG.max_res,
+			max_tool_result: AI_CONFIG.max_tool_result ?? 4000000,
 			gen_min: AI_CONFIG.min_res,
 			do_sample: AI_CONFIG.do_sample,
 			num_beams: AI_CONFIG.num_beams,
@@ -472,6 +508,7 @@ function BuildBootConfig() {
 			compact_at: AI_CONFIG.compact_at ?? 0,
 			compact_tail_tokens: AI_CONFIG.compact_tail_tokens ?? 8000,
 			compact_summary_max: AI_CONFIG.compact_summary_max ?? 8192,
+			git_status_context: AI_CONFIG.git_status_context ? 1 : 0,
 			enable_thinking: AI_CONFIG.enable_thinking || 'auto',
 			reasoning_effort: NormReasoningEffort(AI_CONFIG.reasoning_effort)
 		},
@@ -520,6 +557,7 @@ function BuildCmdParams(name) {
 			return {
 				msg_mem: AI_CONFIG.msg_mem,
 				max_res: AI_CONFIG.max_res,
+				max_tool_result: AI_CONFIG.max_tool_result ?? 4000000,
 				min_res: AI_CONFIG.min_res,
 				do_sample: AI_CONFIG.do_sample,
 				num_beams: AI_CONFIG.num_beams,
@@ -535,6 +573,7 @@ function BuildCmdParams(name) {
 				compact_at: AI_CONFIG.compact_at ?? 0,
 				compact_tail_tokens: AI_CONFIG.compact_tail_tokens ?? 8000,
 				compact_summary_max: AI_CONFIG.compact_summary_max ?? 8192,
+				git_status_context: AI_CONFIG.git_status_context ? 1 : 0,
 				temp_format: AI_CONFIG.temp_format,
 				enable_thinking: AI_CONFIG.enable_thinking || 'auto',
 				reasoning_effort: NormReasoningEffort(AI_CONFIG.reasoning_effort)
@@ -561,7 +600,8 @@ function BuildCmdParams(name) {
 				temp_format: AI_CONFIG.temp_format,
 				tools_file: AI_CONFIG.tools_file,
 				tool_packs: BuildMergedToolPacks(),
-				firecrawl_api_key: AI_CONFIG.firecrawl_api_key || ''
+				firecrawl_api_key: AI_CONFIG.firecrawl_api_key || '',
+				workspace: APP_CONFIG.workspace || ''
 			};
 		case 'gen_image':
 			return {
@@ -631,6 +671,9 @@ module.exports = {
 	setConfigs: SetConfigs,
 	getMcpConfig: GetMcpConfig,
 	setMcpConfig: SetMcpConfig,
+	getMcpOverlay: GetMcpOverlay,
+	setMcpOverlay: SetMcpOverlay,
+	applyMcpOverlayFromDisk: ApplyMcpOverlayFromDisk,
 	buildMergedToolPacks: BuildMergedToolPacks,
 	normalizeNativePacks: NormalizeNativePacks,
 	initAppConfig: InitAppConfig,

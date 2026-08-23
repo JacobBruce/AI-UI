@@ -14,6 +14,7 @@ IMAGE_EXTS = {
 	".bmp": "image/bmp",
 	".tiff": "image/tiff",
 	".tif": "image/tiff",
+	".avif": "image/avif",
 }
 
 VIDEO_EXTS = {
@@ -24,14 +25,18 @@ VIDEO_EXTS = {
 	".avi": "video/x-msvideo",
 	".wmv": "video/x-ms-wmv",
 	".flv": "video/x-flv",
+	".ogv": "video/ogg",
 	".mpeg": "video/mpeg",
 	".mpg": "video/mpeg",
+	".m4v": "video/mp4",
 }
 
 AUDIO_EXTS = {
 	".mp3": "audio/mpeg",
+	".weba": "audio/webm",
 	".wav": "audio/wav",
 	".ogg": "audio/ogg",
+	".oga": "audio/ogg",
 	".wma": "audio/x-ms-wma",
 	".flac": "audio/flac",
 	".aac": "audio/aac",

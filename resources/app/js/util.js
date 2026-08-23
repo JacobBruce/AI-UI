@@ -150,7 +150,7 @@ export function DecodeAiSafeString(txt) {
 		.replaceAll('AI_UI_AMP', '&');
 }
 
-/** Match engine StripEmptyThinkTags - drop empty / whitespace-only think blocks. */
+/** Match engine StripEmptyThinkTags - drop empty think blocks and duplicate adjacent ones. */
 export function StripEmptyThinkTags(txt) {
 	let s = String(txt || '');
 	let prev = null;
@@ -159,7 +159,34 @@ export function StripEmptyThinkTags(txt) {
 		s = s.replace(/<(think|thoughts)>\s*<\/\1>/gi, '');
 		s = s.replace(/AIUI_THINK_START\s*AIUI_THINK_END/g, '');
 	}
-	return s;
+	return CollapseDuplicateThinkBlocks(s);
+}
+
+function CollapseDuplicateThinkBlocks(txt) {
+	let s = String(txt || '');
+	const re = /<(think|thoughts)>([\s\S]*?)<\/\1>/gi;
+	while (true) {
+		re.lastIndex = 0;
+		const blocks = [];
+		let m;
+		while ((m = re.exec(s)) !== null) {
+			blocks.push({ start: m.index, end: m.index + m[0].length, body: m[2], raw: m[0] });
+		}
+		let changed = false;
+		for (let i = 0; i < blocks.length - 1; i++) {
+			const a = blocks[i];
+			const b = blocks[i + 1];
+			if (s.slice(a.end, b.start).trim()) continue;
+			const na = a.body.replace(/\s+/g, ' ').trim();
+			const nb = b.body.replace(/\s+/g, ' ').trim();
+			if (!(na && nb && (na === nb || na.startsWith(nb) || nb.startsWith(na)))) continue;
+			const keep = nb.length > na.length ? b.raw : a.raw;
+			s = s.slice(0, a.start) + keep + s.slice(b.end);
+			changed = true;
+			break;
+		}
+		if (!changed) return s;
+	}
 }
 
 const STREAM_XML_PAIRS = [

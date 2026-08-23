@@ -1255,24 +1255,50 @@ def LastTurnAwaitingReply(messages=None):
 	return False
 
 
+def ComposedSystemPrompt():
+	from lib import prompt_files
+	return prompt_files.ComposeSystemPrompt(
+		getattr(E, "aiui_home", "") or "",
+		getattr(E, "workspace_dir", "") or "",
+		getattr(E, "active_agent", "") or "",
+		getattr(E, "enabled_rules", None),
+		getattr(E, "enabled_skills", None),
+	)
+
+
+def ApplySystemPrompt(text):
+	"""Keep init_prompt as messages[0] without wiping the rest of the transcript."""
+	if getattr(E, "prompt_p", 0) == 2:
+		return
+	body = str(text or "")
+	E.init_prompt = body
+	E.prompt = body
+	sys_msg = StampMsg({"role": "system", "content": body})
+	msgs = list(getattr(E, "messages", None) or [])
+	if msgs and str(msgs[0].get("role") or "").lower() == "system":
+		msgs[0] = sys_msg
+		E.messages = msgs
+	else:
+		E.messages = [sys_msg] + msgs
+
+
 def InitPrompt(have_prompt=False):
 	E.redo_count = 0
 	from lib import context_compact
 	context_compact.ResetCompactState()
-	if have_prompt and E.init_prompt != '':
-		E.prompt = E.init_prompt
-	else:
-		E.prompt = 'Chat session started on {dt.month}/{dt.day}/{dt.year}'.format(dt = datetime.now(timezone.utc))
-		E.init_prompt = E.prompt
-	E.messages = [StampMsg({"role":"system", "content":E.init_prompt})]
 	if E.prompt_p == 2:
 		E.prompt = ''
 		E.init_prompt = 'No prompt'
 		E.messages = []
-	if have_prompt:
-		E.PrintSleep("CLEAR_DONE:"+E.init_prompt.replace("\n", "[AI_UI_BR]"))
 	else:
-		E.PrintSleep("INIT_DONE:"+E.init_prompt.replace("\n", "[AI_UI_BR]"))
+		composed = ComposedSystemPrompt()
+		E.init_prompt = composed
+		E.prompt = composed
+		E.messages = [StampMsg({"role": "system", "content": composed})] if composed else []
+	if have_prompt:
+		E.PrintSleep("CLEAR_DONE:"+(E.init_prompt or "").replace("\n", "[AI_UI_BR]"))
+	else:
+		E.PrintSleep("INIT_DONE:"+(E.init_prompt or "").replace("\n", "[AI_UI_BR]"))
 	context_compact.EmitContextUsage(heuristic=True)
 
 

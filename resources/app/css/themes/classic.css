@@ -426,7 +426,7 @@ p > code, li > code, td > code {
 	position: absolute;
 	top: 300px;
 	left: 0px;
-	right: 262px;
+	right: 202px;
 	bottom: 54px;
 	z-index: 50;
 }
@@ -506,7 +506,7 @@ p > code, li > code, td > code {
 	position: absolute;
 	left: 78px;
 	bottom: 34px;
-	z-index: 5;
+	z-index: 61;
 	padding: 8px 10px;
 	font-size: 12px;
 	line-height: 1.4;

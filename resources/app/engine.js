@@ -19,6 +19,8 @@ var STREAMING = false;
 var STOP_SENT = false;
 var EXPORT_WAIT = null;
 var TOOL_PERM_HANDLER = null;
+/** Per-entry console cap. Import/export IPC and huge STDERR must not freeze the UI. */
+var MAX_CONSOLE_CHARS = 32000;
 
 function EngineRunning() {
 	return (ENGINE_STATE == 'STARTED' || ENGINE_STATE == 'RESTART');
@@ -63,7 +65,24 @@ function SetPlatform(platform_name) {
 	}
 }
 
+function TruncateConsoleMsg(msg) {
+	msg = (msg == null) ? '' : String(msg);
+	if (msg.length <= MAX_CONSOLE_CHARS) return msg;
+	return msg.slice(0, MAX_CONSOLE_CHARS) + '\n... truncated (' + msg.length + ' chars)';
+}
+
+function SummarizeIpcLog(prefix, line) {
+	if (line.length <= MAX_CONSOLE_CHARS) return prefix + line;
+	let hint = '';
+	try {
+		const obj = JSON.parse(line);
+		hint = [obj.type, obj.name || obj.action || obj.channel].filter(Boolean).join(' ');
+	} catch (err) { /* not JSON */ }
+	return prefix + (hint ? hint + ' ' : '') + '(' + line.length + ' chars)';
+}
+
 function LogToConsole(msg) {
+	msg = TruncateConsoleMsg(msg);
 	console.log(msg);
 	if (CB_FUNCS !== null)
 		CB_FUNCS.append_log(msg);
@@ -76,7 +95,7 @@ function SendJson(obj) {
 	}
 	const payload = Object.assign({ v: 1 }, obj);
 	const line = JSON.stringify(payload);
-	LogToConsole('STDIN: ' + line);
+	LogToConsole(SummarizeIpcLog('STDIN: ', line));
 	AI_ENGINE.stdin.write(line + ENDL);
 	return true;
 }
@@ -412,7 +431,7 @@ function OnStdoutChunk(chunk) {
 		if (line.endsWith('\r')) line = line.slice(0, -1);
 		line = line.trim();
 		if (!line) continue;
-		LogToConsole('STDOUT: ' + line);
+		LogToConsole(SummarizeIpcLog('STDOUT: ', line));
 		try {
 			const msg = JSON.parse(line);
 			HandleEngineMessage(msg);

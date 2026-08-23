@@ -363,7 +363,7 @@ export function StopThinking() {
 	}
 }
 
-export function SendMsg() {
+export async function SendMsg() {
 	if ($('#send_btn').html() == 'STOP') {
 		$('#send_btn').prop('disabled', true);
 		ipcRenderer.invoke('stop-stream');
@@ -376,12 +376,23 @@ export function SendMsg() {
 	let html_msg = '';
 	if (state.chat_exp) {
 		message = $('#area_inp').val().trim();
-		$('#area_inp').val('');
 	} else {
 		message = $('#text_inp').val().trim();
-		$('#text_inp').val('');
 	}
 	if (message == '') return;
+	const fitWarn = OversizedSendWarning(message);
+	if (fitWarn) {
+		const ok = await ipcRenderer.invoke('confirm-action', {
+			title: 'Message may not fit',
+			msg: fitWarn,
+		});
+		if (!ok) return;
+	}
+	if (state.chat_exp) {
+		$('#area_inp').val('');
+	} else {
+		$('#text_inp').val('');
+	}
 	messages = message.split('[AIUI_END]');
 	message = message.replaceAll("\n", "[AI_UI_BR]");
 	for (let i=0; i<messages.length; ++i) {
@@ -664,6 +675,11 @@ function FormatLiveBotHtml(raw) {
 	return StripEmptyParagraphs(sealedHtml + FormatLiveOpenTail(open));
 }
 
+function StickLiveThinkScroll() {
+	const body = document.querySelector('#chat_log .ai_think_live .details_body');
+	if (body) body.scrollTop = body.scrollHeight;
+}
+
 function PaintStreamBox(finalize) {
 	if (!state.streaming_bmbl || !state.streaming_bmbl.length) return;
 	streamPaintPending = false;
@@ -687,6 +703,7 @@ function PaintStreamBox(finalize) {
 	if (html.trim() !== '') state.streaming_bmbl.removeClass('hidden').show();
 	if (finalize) FinalizeBotBox(state.streaming_bmbl);
 	else GroupAgentActionDetails(state.streaming_bmbl);
+	if (!finalize) StickLiveThinkScroll();
 	ScrollChatToBottom(false);
 }
 
@@ -1083,6 +1100,41 @@ function FormatTokenCount(n) {
 		return (s.endsWith('.0') ? s.slice(0, -2) : s) + 'k';
 	}
 	return String(Math.round(n));
+}
+
+function HeuristicTokensFromText(text) {
+	return Math.max(0, Math.floor((String(text || '').length + 3) / 4));
+}
+
+function OversizedSendWarning(text) {
+	const limit = Number(state.compact_at) || 0;
+	if (limit <= 0) return '';
+	const msgTok = HeuristicTokensFromText(text);
+	const sys = Number(state.ctx_system) || 0;
+	const tools = Number(state.ctx_tools) || 0;
+	const sum = Number(state.ctx_summary) || 0;
+	const overhead = sys + tools + sum;
+	const tail = Number(state.compact_tail_tokens) || 8000;
+	const needed = overhead + msgTok;
+	if (msgTok > limit || needed > limit) {
+		let msg = 'This message is about ' + FormatTokenCount(msgTok) + ' tokens.';
+		if (overhead > 0) {
+			msg += ' With the system prompt, tools, and any summary ('
+				+ FormatTokenCount(overhead) + '), that is about '
+				+ FormatTokenCount(needed) + ' tokens.';
+		}
+		msg += ' The Context Token Budget is ' + FormatTokenCount(limit)
+			+ '. Send anyway? The model may not see the full message.';
+		return msg;
+	}
+	if (msgTok > tail) {
+		return 'This message is about ' + FormatTokenCount(msgTok)
+			+ ' tokens, larger than Compact Recent Tail ('
+			+ FormatTokenCount(tail)
+			+ '). After compaction the last user message is always kept, '
+			+ 'but there may be little room for other context. Send anyway?';
+	}
+	return '';
 }
 
 function FormatUsagePct(part, whole) {

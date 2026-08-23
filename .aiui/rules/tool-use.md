@@ -6,7 +6,31 @@ Optional natural-language reasoning may appear **before** a tool call.
 
 Do not put commentary after `</tool_call>` in the same reply - wait for the tool response(s), then continue.
 
-The engine accepts all of the following forms inside a single `<tool_call>` block.
+## JSON or XML
+
+The form is the first non-whitespace character inside `<tool_call>`: `{` or `[` is JSON, `<` is XML.
+
+**JSON** for short or simple arguments (paths, flags, small patterns). JSON argument strings must be valid JSON (`\"`, `\\`, newlines as `\n`).
+
+**XML** when an argument is long or multiline (file bodies, patches, including JSON files). Parameter text is copied as-is: real newlines, quotes, braces, and backslashes, with no escaping.
+
+Do not put `</tool_call>` in any argument; it always ends the call. Also do not put `</parameter>` or `</function>` in a value when writing XML-style tool calls.
+
+### XML parameter whitespace
+
+One newline right after the opening tag and one newline right before the closing tag are ignored (so the usual multiline layout works).
+
+Every other character is part of the value, including any whitespace. Do not add extra indent just to nest the text under the XML tags.
+
+```
+<parameter=path>
+src/a.py
+</parameter>
+```
+
+That is the string `src/a.py`. To keep a trailing newline in a file body, leave a blank line before `</parameter>`.
+
+`true`, `false`, `null`, and bare numbers are parsed as those types. Inline is also fine: `<parameter=ascending>true</parameter>`.
 
 ## When to use one function vs many
 
@@ -52,7 +76,8 @@ Same safety rule: multiple `<function>` blocks only when parallel execution is s
 value_1
 </parameter>
 <parameter=example_parameter_2>
-This is the value for the second parameter
+This is the value for
+the second parameter
 </parameter>
 </function>
 <function=other_function_name>

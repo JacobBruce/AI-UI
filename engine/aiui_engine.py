@@ -64,6 +64,7 @@ remote_prompt_cache = 0 if int(_app.get("remote_prompt_cache", 1) or 0) == 0 els
 _mp = str(_app.get("mm_processor", "auto") or "auto").strip().lower()
 mm_processor = _mp if _mp in ("qwen_vl", "janus") else "auto"
 aiui_home = str(_app.get("aiui_home", "")).rstrip('/\\')
+app_version = str(_app.get("app_version", "") or "")
 workspace_dir = str(_app.get("workspace", "")).rstrip('/\\')
 active_agent = str(_app.get("agent", ""))
 enabled_rules = _app.get("enabled_rules", None)
@@ -96,6 +97,7 @@ msg_mem = int(_ai.get("msg_mem", 10))
 compact_at = int(_ai.get("compact_at", 0))
 compact_tail_tokens = int(_ai.get("compact_tail_tokens", 8000))
 compact_summary_max = int(_ai.get("compact_summary_max", 8192))
+git_status_context = int(_ai.get("git_status_context", 0) or 0)
 compact_summary = ""
 compact_until = 0
 compact_count = 0
@@ -105,6 +107,7 @@ last_usage_prompt = None
 last_usage_completion = None
 last_usage_stale = True
 gen_max = int(_ai.get("gen_max", _ai.get("max_res", 32000)))
+tool_result_max = max(1, int(_ai.get("max_tool_result", 4_000_000) or 4_000_000))
 gen_min = int(_ai.get("gen_min", _ai.get("min_res", 1)))
 do_sample = int(_ai.get("do_sample", 1))
 num_beams = int(_ai.get("num_beams", 1))
@@ -154,6 +157,8 @@ tool_func = None
 tool_catalog = None
 use_tool_config = True
 _anthropic_last_content = None  # sidecar from last Anthropic remote reply (thinking/tool_use)
+_openai_last_reasoning_details = None  # OpenRouter reasoning_details for the last OpenAI-compat reply
+_openai_last_reasoning_pin = None  # {model, provider, zdr} for the endpoint that minted encrypted details
 
 # Provisional defaults; overwritten from GPU size after utils.bind (see below).
 min_res_vram_mb = 256
@@ -226,10 +231,11 @@ from lib import utils, files, tool_client, tts, asr, chat, img, model_args as mo
 from lib import fs_sandbox, tool_permissions, text_backend as text_backend_mod, janus_backend
 from lib import remote_tools as remote_tools_mod
 from lib import context_compact as context_compact_mod
+from lib import git_context as git_context_mod
 import sys as _sys
 _engine = _sys.modules[__name__]
 
-for _m in (utils, files, tool_client, tts, asr, chat, img, model_args_mod, prompt_files, fs_sandbox, tool_permissions, text_backend_mod, janus_backend, remote_tools_mod, context_compact_mod):
+for _m in (utils, files, tool_client, tts, asr, chat, img, model_args_mod, prompt_files, fs_sandbox, tool_permissions, text_backend_mod, janus_backend, remote_tools_mod, context_compact_mod, git_context_mod):
 	_m.bind(_engine)
 
 # Re-export so main-loop names and E.* cross-calls resolve on this module
@@ -404,6 +410,8 @@ _pf_snap = prompt_files.SendPromptFilesEvent(aiui_home, workspace_dir, active_ag
 active_agent = _pf_snap.get("agent", "")
 enabled_rules = _pf_snap.get("enabled_rules")
 enabled_skills = _pf_snap.get("enabled_skills")
+if prompt_p < 2:
+	chat.ApplySystemPrompt(_pf_snap.get("composed") or "")
 
 def _CmdParams(msg):
 	params = msg.get("params")
@@ -463,20 +471,41 @@ def _ParseToolCalls(text):
 	return True, preface, calls, leftover
 
 
+# Host-wide ceiling for any tool result (native or MCP). Above native 2MB file
+# reads / 200k cmd output so those caps still win; 3rd-party MCP dumps cannot
+# flood the transcript.
+_MAX_TOOL_RESULT_CHARS = 4_000_000
+
+
 def _ResultToToolContent(tc_result):
 	if isinstance(tc_result, (int, float, bool)):
-		return str(tc_result)
-	if not isinstance(tc_result, str):
-		return json.dumps(tc_result)
-	return tc_result
+		text = str(tc_result)
+	elif not isinstance(tc_result, str):
+		text = json.dumps(tc_result)
+	else:
+		text = tc_result
+	n = len(text)
+	cap = tool_result_max
+	try:
+		cap = int(cap)
+	except (TypeError, ValueError):
+		cap = _MAX_TOOL_RESULT_CHARS
+	if cap < 1:
+		cap = _MAX_TOOL_RESULT_CHARS
+	if n <= cap:
+		return text
+	note = f"\n\n... truncated at {cap} chars (tool result was {n} chars)"
+	keep = max(0, cap - len(note))
+	return text[:keep] + note
 
 
 def _RunToolCallBlock(raw_inner, aiui_funcs, on_result=None):
 	"""Permission-gate then run (start on each grant). Returns (display_raw, results, err_count).
 
 	results: list of (name, content_str, is_error) in original call order.
-	on_result(name, content, is_error): optional; called as soon as each slot finishes
-	(completion order), including immediate denies.
+	Tools still run in parallel; on_result(name, content, is_error, call_id) fires
+	in call order (flush the ready prefix as later slots finish) so the transcript
+	and OpenAI/Anthropic remappers never FIFO-attach a faster result to the wrong call.
 	"""
 	from concurrent.futures import ThreadPoolExecutor, as_completed
 	from lib import tool_calls, tool_permissions
@@ -490,61 +519,75 @@ def _RunToolCallBlock(raw_inner, aiui_funcs, on_result=None):
 			on_result("unknown", content, True)
 		return display_raw or raw_inner or "", [("unknown", content, True)], 1
 
-	def Emit(name, content, is_err):
+	def Emit(name, content, is_err, call_id=""):
 		if on_result:
-			on_result(name, content, is_err)
+			on_result(name, content, is_err, call_id)
 
-	# slots[i] = (name, result_or_None, future_or_None, is_error_pre)
+	# slots[i] = (name, result_or_None, future_or_None, is_error, call_id)
 	slots = []
 	futures = {}
+	emitted = 0
+
+	def FlushReady():
+		nonlocal emitted
+		while emitted < len(slots):
+			name, result, fut, is_err, call_id = slots[emitted]
+			if fut is not None:
+				return
+			Emit(name, result, is_err, call_id)
+			emitted += 1
+
 	max_workers = max(1, min(8, len(calls)))
 	executor = ThreadPoolExecutor(max_workers=max_workers)
 	try:
 		for call in calls:
 			name = call.get("name") or "unknown"
 			args = call.get("arguments") or {}
+			call_id = str(call.get("id") or "")
 			if ipc.StopRequested():
 				content = "ERROR: tool call denied by user"
-				slots.append((name, content, None, True))
-				Emit(name, content, True)
+				slots.append((name, content, None, True, call_id))
+				FlushReady()
 				continue
 			if not tool_permissions.RequirePermission(name, args):
 				content = "ERROR: tool call denied by user"
-				slots.append((name, content, None, True))
-				Emit(name, content, True)
+				slots.append((name, content, None, True, call_id))
+				FlushReady()
 				continue
 			fut = executor.submit(DispatchToolFunc, name, args, aiui_funcs)
-			slots.append((name, None, fut, False))
+			slots.append((name, None, fut, False, call_id))
 			futures[fut] = len(slots) - 1
 
 		for fut in as_completed(futures):
 			idx = futures[fut]
-			name, _, _, _ = slots[idx]
+			name, _, _, _, call_id = slots[idx]
 			try:
 				result = fut.result()
 			except Exception as e:
 				result = f"ERROR: {e}"
 			content = _ResultToToolContent(result)
 			is_err = str(content).startswith("ERROR:")
-			slots[idx] = (name, content, None, is_err)
-			Emit(name, content, is_err)
+			slots[idx] = (name, content, None, is_err, call_id)
+			FlushReady()
 	finally:
 		executor.shutdown(wait=True)
 
 	results = []
 	err_count = 0
-	for name, result, fut, pre_err in slots:
+	for i, (name, result, fut, pre_err, call_id) in enumerate(slots):
 		if fut is not None:
 			try:
 				result = _ResultToToolContent(fut.result())
 			except Exception as e:
 				result = f"ERROR: {e}"
 			pre_err = str(result).startswith("ERROR:")
-		content = result if isinstance(result, str) else _ResultToToolContent(result)
-		is_err = pre_err or str(content).startswith("ERROR:")
+			slots[i] = (name, result, None, pre_err, call_id)
+		content = slots[i][1] if isinstance(slots[i][1], str) else _ResultToToolContent(slots[i][1])
+		is_err = slots[i][3] or str(content).startswith("ERROR:")
 		if is_err:
 			err_count += 1
 		results.append((name, content, is_err))
+	FlushReady()
 	return display_raw, results, err_count
 
 def _FormatTurnDisplay(cmb_response):
@@ -600,8 +643,9 @@ def _SendTurnPatch(turn_parts):
 def _CollapseAssistantRun(start_idx):
 	"""Merge consecutive assistant messages from one bot turn into one entry.
 
-	Skip when any message carries an Anthropic `_anthropic_content` sidecar - those
-	must stay separate so tool_use ids stay ordered for MapMessagesAnthropic.
+	Skip when any message carries an Anthropic `_anthropic_content` or OpenRouter
+	`_reasoning_details` sidecar - those must stay on the assistant turn that
+	produced them so remappers can replay thinking/tool_use ids.
 	"""
 	global messages
 	if start_idx < 0 or start_idx >= len(messages):
@@ -616,7 +660,10 @@ def _CollapseAssistantRun(start_idx):
 	if len(parts) <= 1:
 		return
 	for m in messages[start_idx:end]:
-		if isinstance(m, dict) and m.get("_anthropic_content") is not None:
+		if isinstance(m, dict) and (
+			m.get("_anthropic_content") is not None
+			or m.get("_reasoning_details") is not None
+		):
 			return
 	combined = "\n\n".join(parts)
 	msg = {"role": bot_name, "content": combined}
@@ -633,10 +680,23 @@ def _CollapseAssistantRun(start_idx):
 		chat.StampMsg(msg)
 	messages[start_idx:end] = [msg]
 
+def _AttachRemoteSidecars(msg):
+	"""Copy provider thinking blobs onto the assistant message that just finished."""
+	global _anthropic_last_content, _openai_last_reasoning_details, _openai_last_reasoning_pin
+	if _anthropic_last_content is not None:
+		msg["_anthropic_content"] = _anthropic_last_content
+		_anthropic_last_content = None
+	if _openai_last_reasoning_details is not None:
+		msg["_reasoning_details"] = _openai_last_reasoning_details
+		_openai_last_reasoning_details = None
+	if _openai_last_reasoning_pin is not None:
+		msg["_reasoning_pin"] = _openai_last_reasoning_pin
+		_openai_last_reasoning_pin = None
+
 def _RunBotTurn():
 	"""Generate, early-stop on tool calls, run tools, continue until a final answer."""
 	global prompt, messages, responses, redo_count, rando_lvl, chat_files, r, model
-	global _anthropic_last_content
+	global _anthropic_last_content, _openai_last_reasoning_details, _openai_last_reasoning_pin
 	prompt += "\n"+bot_name_c
 	rando_lvl -= rando_sub
 	temp = min(1.0, max(rando_lvl, rando_min))
@@ -648,6 +708,11 @@ def _RunBotTurn():
 	max_rounds = 24
 	aiui_funcs = { "GenImageIPA": GenImageIPA, "GenImage": GenImage }
 	stream_open = False
+	try:
+		git_context_mod.EnsureGitContext(freeze=True)
+	except Exception as e:
+		ipc.LogException("git_context", e)
+		git_context_mod.ClearGitContext()
 	# Compact once per turn (before any generate / tool round).
 	try:
 		context_compact_mod.RunCompactIfNeeded()
@@ -698,9 +763,7 @@ def _RunBotTurn():
 			# Final assistant text (no tool call) — append and finish.
 			if (not enable_tooluse) or (not has_tool):
 				msg = chat.StampMsg({"role": bot_name, "content": cmb_response})
-				if _anthropic_last_content is not None:
-					msg["_anthropic_content"] = _anthropic_last_content
-					_anthropic_last_content = None
+				_AttachRemoteSidecars(msg)
 				messages.append(msg)
 				turn_parts.append(cmb_response)
 				_SendTurnPatch(turn_parts)
@@ -710,11 +773,12 @@ def _RunBotTurn():
 					ipc.LogException("context_usage after generation", e)
 				break
 
+			pending_preface = ""
 			if preface:
 				preface = StripEmptyThinkTags(preface)
 				if preface:
 					turn_parts.append(preface)
-					messages.append(chat.StampMsg({"role": bot_name, "content": preface}))
+					pending_preface = preface
 					_SendTurnPatch(turn_parts)
 
 			# Run every complete tool call block from this generation (early-stop usually
@@ -726,14 +790,21 @@ def _RunBotTurn():
 					text_part = StripEmptyThinkTags(item.get("text") or "")
 					if not text_part:
 						continue
+					stored = text_part
+					if pending_preface:
+						stored = pending_preface + "\n\n" + text_part
+						pending_preface = ""
 					turn_parts.append(text_part)
-					messages.append(chat.StampMsg({"role": bot_name, "content": text_part}))
+					messages.append(chat.StampMsg({"role": bot_name, "content": stored}))
 					continue
 
 				raw_inner = item.get("raw") or item.get("json") or ""
 
-				def _OnToolResult(tool_name, tc_result, is_err):
-					tr_data = json.dumps({"name": tool_name, "content": tc_result})
+				def _OnToolResult(tool_name, tc_result, is_err, call_id=""):
+					payload = {"name": tool_name, "content": tc_result}
+					if call_id:
+						payload["id"] = call_id
+					tr_data = json.dumps(payload)
 					messages.append(chat.StampMsg({
 						"role": bot_name,
 						"content": "<tool_response>"+tr_data+"</tool_response>",
@@ -745,16 +816,19 @@ def _RunBotTurn():
 					except Exception as e:
 						ipc.LogException("context_usage after tool", e)
 
-				# Show the call block first, then stream each response as it finishes.
+				# Show the call block first, then append responses in call order.
 				from lib import tool_calls as _tc
 				_preview = _tc.ParseToolCallInner(raw_inner)
 				display_raw = _tc.SerializeToolCallInner(_preview) if _preview else (raw_inner or "")
+				call_xml = "<tool_call>" + display_raw + "</tool_call>"
+				body = call_xml
+				if pending_preface:
+					body = pending_preface + "\n\n" + call_xml
+					pending_preface = ""
 				turn_parts.append("<tool_call>" + SafeString(display_raw) + "</tool_call>")
 				_SendTurnPatch(turn_parts)
-				tc_msg = chat.StampMsg({"role": bot_name, "content": "<tool_call>" + display_raw + "</tool_call>"})
-				if _anthropic_last_content is not None:
-					tc_msg["_anthropic_content"] = _anthropic_last_content
-					_anthropic_last_content = None
+				tc_msg = chat.StampMsg({"role": bot_name, "content": body})
+				_AttachRemoteSidecars(tc_msg)
 				messages.append(tc_msg)
 				try:
 					context_compact_mod.EmitContextUsageAfterGeneration()
@@ -769,6 +843,13 @@ def _RunBotTurn():
 				if tc_errors > 4:
 					turn_parts.append("ERROR: bad tool calls")
 					break
+
+			if pending_preface:
+				# No tool_call/text item consumed the think preface (stopped or empty).
+				preface_msg = chat.StampMsg({"role": bot_name, "content": pending_preface})
+				_AttachRemoteSidecars(preface_msg)
+				messages.append(preface_msg)
+				pending_preface = ""
 
 			if tc_errors > 4:
 				break
@@ -845,6 +926,8 @@ def _RunBotTurn():
 		PrintSleep("BOT_NOANIM:" + err.replace("\n", "[AI_UI_BR]"))
 		chat_files = []
 		PrunePrompt()
+	finally:
+		git_context_mod.EnsureGitContext(freeze=False)
 
 def _SyncTemplateFlags():
 	global use_chat_template, use_aiui_template, aiui_tool_instructions
@@ -927,8 +1010,8 @@ def _MmContentPart(chat_file):
 def HandleCmd(msg):
 	global init_prompt, messages, prompt, chat_files
 	global voice_key, voice_vol, voice_rate, voice_ps, talk_mode, tts_mode, anim_mode, avatar_img
-	global msg_mem, gen_max, gen_min, do_sample, num_beams, beam_groups
-	global compact_at, compact_tail_tokens, compact_summary_max
+	global msg_mem, gen_max, tool_result_max, gen_min, do_sample, num_beams, beam_groups
+	global compact_at, compact_tail_tokens, compact_summary_max, git_status_context
 	global rando_lvl, prompt_p, top_k, top_p, typical_p, rep_penalty, frequency_penalty, presence_penalty, rando_min
 	global enable_thinking, reasoning_effort, mm_processor
 	global gen_mode, format_mode, enable_tooluse, hf_access_token
@@ -961,6 +1044,9 @@ def HandleCmd(msg):
 		active_agent = snap.get("agent", "")
 		enabled_rules = snap.get("enabled_rules")
 		enabled_skills = snap.get("enabled_skills")
+		if prompt_p < 2:
+			chat.ApplySystemPrompt(snap.get("composed") or "")
+			PrunePrompt()
 	elif name == "update_prompt":
 		init_prompt = str(p.get("prompt", p.get("init_prompt", ""))).replace("[AI_UI_BR]", "\n").replace("\r", '')
 		if prompt_p < 2:
@@ -1060,7 +1146,15 @@ def HandleCmd(msg):
 			compact_tail_tokens = int(p.get("compact_tail_tokens", compact_tail_tokens))
 		if "compact_summary_max" in p:
 			compact_summary_max = int(p.get("compact_summary_max", compact_summary_max))
+		if "git_status_context" in p:
+			git_status_context = int(p.get("git_status_context", git_status_context) or 0)
 		gen_max = int(p.get("gen_max", p.get("max_res", gen_max)))
+		if "max_tool_result" in p or "tool_result_max" in p:
+			try:
+				n = int(p.get("max_tool_result", p.get("tool_result_max", tool_result_max)))
+			except (TypeError, ValueError):
+				n = tool_result_max
+			tool_result_max = n if n >= 1 else 4_000_000
 		gen_min = int(p.get("gen_min", p.get("min_res", gen_min)))
 		do_sample = int(p.get("do_sample", do_sample))
 		num_beams = int(p.get("num_beams", num_beams))
@@ -1127,6 +1221,8 @@ def HandleCmd(msg):
 		except Exception as e:
 			ipc.LogException("context_usage after config_remote", e)
 	elif name == "config_tools":
+		if "workspace" in p:
+			workspace_dir = str(p.get("workspace", "") or "").rstrip("/\\")
 		if "temp_form" in p or "temp_format" in p:
 			_ApplyTemplateFormat(p.get("temp_form", p.get("temp_format", temp_form)))
 		else:

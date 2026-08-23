@@ -3,6 +3,8 @@ import { state } from './state.js';
 
 /** Cap console DOM nodes so a long session does not lag the UI. */
 const MAX_CONSOLE_LOGS = 500;
+/** Cap each entry so import/export IPC and huge STDERR cannot freeze the tab. */
+const MAX_CONSOLE_CHARS = 32000;
 let consoleLogCount = 1; // initial "Application started" <pre>
 
 export function CmdHistory(shift, val) {
@@ -26,6 +28,10 @@ export function RunCmd() {
 function AppendConsoleLog(msg) {
 	const logBox = document.getElementById('log_box');
 	if (!logBox) return;
+	msg = (msg == null) ? '' : String(msg);
+	if (msg.length > MAX_CONSOLE_CHARS) {
+		msg = msg.slice(0, MAX_CONSOLE_CHARS) + '\n... truncated (' + msg.length + ' chars)';
+	}
 	const pre = document.createElement('pre');
 	pre.className = 'console_log';
 	pre.textContent = msg;

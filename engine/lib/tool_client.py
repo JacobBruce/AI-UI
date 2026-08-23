@@ -38,6 +38,7 @@ def _name_disabled(disabled, *names):
 
 def _default_packs():
 	return [
+		{"id": "native:utils", "kind": "native", "name": "Utils", "enabled": True, "disabled_tools": [], "permission_mode": "auto"},
 		{"id": "native:math", "kind": "native", "name": "Math", "enabled": True, "disabled_tools": [], "permission_mode": "ask"},
 		{"id": "native:web", "kind": "native", "name": "Web", "enabled": True, "disabled_tools": [], "permission_mode": "ask"},
 		{
@@ -145,8 +146,14 @@ def NormalizeToolPacks(raw_packs, tool_mode=None):
 				item["env"] = dict(env) if isinstance(env, dict) else {}
 				item["cwd"] = str(item.get("cwd", "") or "")
 				item["server_id"] = str(item.get("server_id", "") or item["id"].replace("mcp:", "", 1))
+			if any(x.get("id") == item["id"] for x in out):
+				continue
 			out.append(item)
 		if out:
+			have = {item["id"] for item in out}
+			missing = [d for d in _default_packs() if d["id"] not in have]
+			if missing:
+				out = missing + out
 			return out
 	return _migrate_packs_from_tool_mode(tool_mode)
 
@@ -244,7 +251,7 @@ def BuildPackCatalog(packs=None):
 			if hasattr(mod, "configure"):
 				mod.configure(web_cfg)
 			# Declared tools (not filtered by Firecrawl availability) for toggle UI.
-			tools = [_native_expose(t) for t in (getattr(mod, "TOOLS", None) or mod.list_tools())]
+			tools = [_native_expose(t) for t in mod.list_tools()]
 			catalog[pid] = _catalog_entry(tools, disabled)
 		elif p.get("kind") == "mcp":
 			# Live session schemas, else last list captured when the server started.
@@ -254,8 +261,38 @@ def BuildPackCatalog(packs=None):
 			catalog[pid] = []
 	return catalog
 
+def _InputSchemaFor(func_name):
+	"""inputSchema / parameters for a dispatched tool name, or {}."""
+	name = str(func_name or "")
+	bare = BareNativeName(name)
+	prefixed = PrefixedNativeName(bare)
+	for t in getattr(E, "tool_funcs", None) or []:
+		if not isinstance(t, dict):
+			continue
+		fn = t.get("function") if t.get("type") == "function" else t
+		if not isinstance(fn, dict):
+			continue
+		if fn.get("name") in (name, bare, prefixed):
+			return fn.get("parameters") or fn.get("inputSchema") or {}
+	packs = getattr(E, "tool_packs", None) or []
+	for _p, mod in _enabled_native_modules(packs):
+		for tool in mod.list_tools():
+			if tool.get("name") in (name, bare):
+				return tool.get("inputSchema") or {}
+	try:
+		for tool in mcp_client.list_enabled_schemas():
+			if tool.get("name") in (name, prefixed):
+				return tool.get("inputSchema") or tool.get("parameters") or {}
+	except Exception:
+		pass
+	return {}
+
+
 def DispatchToolFunc(func_name, func_args, aiui_funcs=None):
 	"""Run a tool with no permission prompt (caller already gated)."""
+	from lib.tool_calls import CoerceArgsToSchema
+
+	func_args = CoerceArgsToSchema(func_args or {}, _InputSchemaFor(func_name))
 	packs = getattr(E, "tool_packs", None) or []
 	native_bare = BareNativeName(func_name)
 	for p, mod in _enabled_native_modules(packs):

@@ -121,13 +121,10 @@ export function HandlePromptFiles(data) {
 	RenderFileToggles('#rules_toggles', rules, state.enabled_rules, 'id');
 	RenderFileToggles('#skills_toggles', skills, state.enabled_skills, 'name');
 
-	const composed = data.composed || '';
-	const should_apply = state.apply_compose || (!state.prompt_files_ready && composed != '');
+	const composed = data.composed;
 	state.prompt_files_ready = true;
 	state.apply_compose = false;
-	if (should_apply && composed != '') {
-		ApplyComposedPrompt(composed);
-	}
+	if (composed != null) ApplyComposedPrompt(composed);
 }
 
 export function ShowPromptChip(show) {

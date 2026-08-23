@@ -1,4 +1,5 @@
-/** ~/.aiui/mcp.json - installed MCP servers (Cursor-compatible shape + enabled flag). */
+/** ~/.aiui/mcp.json - installed MCP servers (Cursor-compatible shape).
+ * Enable is per Home/project overlay in that scope's config.json, not this file. */
 
 const fs = require('fs');
 const path = require('path');
@@ -49,7 +50,6 @@ function NormalizeServer(id, cfg) {
 		args,
 		cwd: String(c.cwd || ''),
 		env,
-		enabled: !!c.enabled,
 		name: String(c.name || id),
 		disabledTools: NormalizeDisabledTools(c.disabledTools || c.disabled_tools),
 		permissionMode: pm === 'auto' ? 'auto' : 'ask'
@@ -95,7 +95,8 @@ function LoadMcpConfig(aiuiHome) {
 		WriteJson(file, fresh);
 		return fresh;
 	}
-	const cfg = NormalizeMcpConfig(ReadJson(file, DefaultMcpConfig()));
+	const raw = ReadJson(file, DefaultMcpConfig());
+	const cfg = NormalizeMcpConfig(raw);
 	const warnings = TakeWarnings(cfg);
 	if (warnings.length) cfg._warnings = warnings;
 	return cfg;
@@ -104,11 +105,9 @@ function LoadMcpConfig(aiuiHome) {
 function SaveMcpConfig(aiuiHome, cfg) {
 	const normalized = NormalizeMcpConfig(cfg);
 	const warnings = TakeWarnings(normalized);
-	// Strip non-persistent fields before write
-	const toWrite = { mcpServers: normalized.mcpServers };
-	WriteJson(GetMcpPath(aiuiHome), toWrite);
-	if (warnings.length) normalized._warnings = warnings;
-	return normalized;
+	WriteJson(GetMcpPath(aiuiHome), { mcpServers: normalized.mcpServers });
+	if (warnings.length && cfg) cfg._warnings = warnings;
+	return cfg || normalized;
 }
 
 /** Convert mcp.json servers into tool-pack rows for UI/engine. */
@@ -120,7 +119,7 @@ function ServersToPacks(mcpConfig) {
 			id: 'mcp:' + id,
 			kind: 'mcp',
 			name: s.name || id,
-			enabled: s.enabled,
+			enabled: !!servers[id].enabled,
 			command: s.command,
 			args: s.args,
 			cwd: s.cwd,
@@ -134,11 +133,11 @@ function ServersToPacks(mcpConfig) {
 
 /** Merge edited pack back into mcp.json object. Rejects empty ids. */
 function UpsertPack(mcpConfig, pack) {
-	const cfg = NormalizeMcpConfig(mcpConfig);
-	TakeWarnings(cfg);
+	const cfg = {
+		mcpServers: Object.assign({}, (mcpConfig && mcpConfig.mcpServers) || {})
+	};
 	const serverId = String(pack.server_id || (pack.id || '').replace(/^mcp:/, '') || '').trim();
 	if (!serverId) return cfg;
-	// Case-insensitive conflict with a different key — do not overwrite the other server.
 	const lower = serverId.toLowerCase();
 	for (const existing of Object.keys(cfg.mcpServers)) {
 		if (existing.toLowerCase() === lower && existing !== serverId) {
@@ -153,24 +152,61 @@ function UpsertPack(mcpConfig, pack) {
 	const perm = pack.hasOwnProperty('permission_mode')
 		? pack.permission_mode
 		: (pack.hasOwnProperty('permissionMode') ? pack.permissionMode : prev.permissionMode);
-	cfg.mcpServers[serverId] = NormalizeServer(serverId, {
+	const next = NormalizeServer(serverId, {
 		command: pack.hasOwnProperty('command') ? pack.command : prev.command,
 		args: pack.hasOwnProperty('args') ? pack.args : prev.args,
 		cwd: pack.hasOwnProperty('cwd') ? pack.cwd : prev.cwd,
 		env: pack.hasOwnProperty('env') ? pack.env : prev.env,
-		enabled: pack.hasOwnProperty('enabled') ? pack.enabled : prev.enabled,
 		name: pack.name || prev.name || serverId,
 		disabledTools: disabled,
 		permissionMode: perm
 	});
+	next.enabled = !!prev.enabled;
+	cfg.mcpServers[serverId] = next;
 	return cfg;
 }
 
-function SetServerEnabled(mcpConfig, serverId, enabled) {
+/** Lightweight per-scope MCP enable/disabled_tools/permission_mode (no command/args). */
+function ExtractMcpOverlay(packs) {
+	const out = [];
+	if (!Array.isArray(packs)) return out;
+	for (const p of packs) {
+		if (!p || p.kind !== 'mcp') continue;
+		const sid = String(p.server_id || String(p.id || '').replace(/^mcp:/, '') || '').trim();
+		if (!sid) continue;
+		const pm = String(p.permission_mode || p.permissionMode || 'ask').trim().toLowerCase();
+		out.push({
+			id: 'mcp:' + sid,
+			kind: 'mcp',
+			server_id: sid,
+			enabled: !!p.enabled,
+			disabled_tools: NormalizeDisabledTools(p.disabled_tools || p.disabledTools),
+			permission_mode: pm === 'auto' ? 'auto' : 'ask'
+		});
+	}
+	return out;
+}
+
+function ApplyMcpOverlay(mcpConfig, overlay) {
 	const cfg = NormalizeMcpConfig(mcpConfig);
-	const id = String(serverId || '').trim();
-	if (!id || !cfg.mcpServers[id]) return cfg;
-	cfg.mcpServers[id].enabled = !!enabled;
+	TakeWarnings(cfg);
+	const byId = {};
+	for (const p of overlay || []) {
+		const sid = String((p && (p.server_id || String(p.id || '').replace(/^mcp:/, ''))) || '').trim();
+		if (sid) byId[sid] = p;
+	}
+	for (const sid of Object.keys(cfg.mcpServers)) {
+		const o = byId[sid];
+		if (!o) {
+			cfg.mcpServers[sid].enabled = false;
+			continue;
+		}
+		cfg.mcpServers[sid].enabled = !!o.enabled;
+		if (Array.isArray(o.disabled_tools)) cfg.mcpServers[sid].disabledTools = NormalizeDisabledTools(o.disabled_tools);
+		if (o.permission_mode) {
+			cfg.mcpServers[sid].permissionMode = o.permission_mode === 'auto' ? 'auto' : 'ask';
+		}
+	}
 	return cfg;
 }
 
@@ -216,6 +252,7 @@ module.exports = {
 	TakeWarnings,
 	ServersToPacks,
 	UpsertPack,
-	SetServerEnabled,
+	ExtractMcpOverlay,
+	ApplyMcpOverlay,
 	MigrateFromToolPacks
 };

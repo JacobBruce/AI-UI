@@ -169,6 +169,9 @@ function ApplyProjectScopedConfigs(core, scoped) {
 	}
 	for (const k of BOOKKEEPING_APP) merged.app[k] = cur.app[k];
 	core.setConfigs(merged);
+	if (typeof core.applyMcpOverlayFromDisk === 'function') {
+		core.applyMcpOverlayFromDisk(GetAiuiHome());
+	}
 }
 
 function LoadOrSeedProjectConfig(core, key) {

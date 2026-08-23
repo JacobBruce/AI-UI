@@ -9,6 +9,7 @@ in a tight _deliver_cancellation loop (~100% of one core).
 
 import asyncio
 import os
+import re
 import threading
 import time
 
@@ -89,6 +90,62 @@ def _mcp_log_prefix(cfg):
 	if name.startswith("mcp:"):
 		name = name[4:]
 	return f"[MCP:{name}] "
+
+
+_TOKEN_RE = re.compile(r"\$\{([^}]+)\}")
+
+
+def _workspace_folder():
+	try:
+		from lib import fs_sandbox
+		return fs_sandbox.GetFilesRoot()
+	except Exception:
+		return os.path.abspath(os.path.expanduser(os.path.join("~", ".aiui")))
+
+
+def ExpandMcpValue(s, folder=None):
+	"""Expand Cursor/VS Code-shaped tokens in an mcp.json string."""
+	if not isinstance(s, str) or "${" not in s:
+		return s
+	root = folder if folder is not None else _workspace_folder()
+	root = str(root or "").rstrip("/\\")
+	home = os.path.expanduser("~")
+	base = os.path.basename(root) or root
+	sep = os.sep
+
+	def _repl(m):
+		name = m.group(1)
+		if name == "workspaceFolder":
+			return root
+		if name == "workspaceFolderBasename":
+			return base
+		if name == "userHome":
+			return home
+		if name in ("pathSeparator", "/"):
+			return sep
+		if name.startswith("env:"):
+			return os.environ.get(name[4:], "")
+		return m.group(0)
+
+	return _TOKEN_RE.sub(_repl, s)
+
+
+def ExpandMcpCfg(cfg, folder=None):
+	"""Return a copy of an MCP pack cfg with tokens expanded (spawn-time only)."""
+	out = dict(cfg or {})
+	root = folder if folder is not None else _workspace_folder()
+	out["command"] = ExpandMcpValue(str(out.get("command") or ""), root)
+	args = out.get("args") or []
+	if isinstance(args, list):
+		out["args"] = [ExpandMcpValue(str(a), root) for a in args]
+	cwd = out.get("cwd")
+	if isinstance(cwd, str) and cwd.strip():
+		out["cwd"] = ExpandMcpValue(cwd, root)
+	env = out.get("env")
+	if isinstance(env, dict):
+		out["env"] = {str(k): ExpandMcpValue(str(v), root) for k, v in env.items()}
+	return out
+
 
 def _ensure_loop():
 	global _loop, _loop_thread
@@ -392,8 +449,9 @@ def sync_servers(server_cfgs, force_ids=None):
 	from lib import ipc
 	errors = []
 	for pack_id, cfg in wanted.items():
+		expanded = ExpandMcpCfg(cfg)
 		prev_cfg, prev = snapshot.get(pack_id, (None, None))
-		need_connect = pack_id in force_ids or prev is None or not _cfg_same(prev_cfg, cfg)
+		need_connect = pack_id in force_ids or prev is None or not _cfg_same(prev_cfg, expanded)
 		if not need_connect:
 			continue
 
@@ -405,7 +463,7 @@ def sync_servers(server_cfgs, force_ids=None):
 
 		try:
 			ipc.LogErr(f"Engine: connecting MCP {pack_id} ...")
-			info = _await(_connect_one(cfg), timeout=60)
+			info = _await(_connect_one(expanded), timeout=60)
 			_cache_schemas(pack_id, info.get("schemas"))
 			with _lock:
 				_sessions[pack_id] = info

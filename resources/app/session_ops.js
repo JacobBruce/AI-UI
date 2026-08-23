@@ -62,7 +62,11 @@ function CreateSessionOps({ core, engine, getWin, rebuildMenu, saveGlobalConfig 
 		engine.sendEngineCmd('config_voice');
 		engine.sendEngineCmd('config_other');
 		engine.sendEngineCmd('config_remote');
-		engine.sendEngineCmd('config_tools');
+		const params = Object.assign({}, core.buildCmdParams('config_tools'));
+		params.force_mcp_ids = (params.tool_packs || [])
+			.filter((p) => p && p.kind === 'mcp' && p.id)
+			.map((p) => String(p.id));
+		engine.sendEngineCmd('config_tools', params);
 	}
 
 	function PromptFilesPayload(workspace) {

@@ -270,28 +270,128 @@ def FindKeepTailStart(messages):
 	return last_user
 
 
+def _LastUserIndex(messages):
+	idx = -1
+	for i, m in enumerate(messages or []):
+		if isinstance(m, dict) and not IsCompactNotice(m) and _IsUserMsg(m):
+			idx = i
+	return idx
+
+
+def _ToolXmlKind(msg):
+	"""'call', 'resp', or 'other' from stored assistant XML (not collapsed both)."""
+	if not isinstance(msg, dict):
+		return "other"
+	text = ContentToText(msg.get("content"))
+	has_call = "<tool_call>" in text
+	has_resp = "<tool_response>" in text
+	if has_call and not has_resp:
+		return "call"
+	if has_resp and not has_call:
+		return "resp"
+	return "other"
+
+
+def _TruncateMsgSuffix(msg, char_budget):
+	"""Keep the end of a message's text. Preserve tool XML wrappers when present."""
+	if not isinstance(msg, dict):
+		return msg
+	text = ContentToText(msg.get("content"))
+	if len(text) <= char_budget:
+		return msg
+	out = dict(msg)
+	kind = _ToolXmlKind(msg)
+	wrap = {"call": ("<tool_call>", "</tool_call>"), "resp": ("<tool_response>", "</tool_response>")}.get(kind)
+	if wrap:
+		open_t, close_t = wrap
+		start = text.find(open_t)
+		end = text.rfind(close_t)
+		if start >= 0 and end > start:
+			head = text[:start]
+			body = text[start + len(open_t):end]
+			tail = text[end + len(close_t):]
+			overhead = len(head) + len(open_t) + len(close_t) + len(tail)
+			keep = max(0, char_budget - overhead)
+			body = body[-keep:] if keep else ""
+			out["content"] = head + open_t + body + close_t + tail
+			if len(out["content"]) <= char_budget:
+				return out
+	out["content"] = text[-char_budget:]
+	return out
+
+
+def _DropOldestTailGroup(out, last_user):
+	"""Drop the oldest droppable message; tool_call takes following tool_response(s)."""
+	if last_user == 0:
+		drop_at = 1
+	else:
+		drop_at = 0
+	if drop_at >= len(out) or drop_at == last_user:
+		return out, last_user
+	end = drop_at + 1
+	if _ToolXmlKind(out[drop_at]) == "call":
+		while end < len(out) and end != last_user and _ToolXmlKind(out[end]) == "resp":
+			end += 1
+	n = end - drop_at
+	out = out[:drop_at] + out[end:]
+	if last_user >= end:
+		last_user -= n
+	return out, last_user
+
+
 def _CapTailByTokens(messages, max_tokens):
 	"""Trim from the front of the tail until under max_tokens.
 
-	May drop older messages of the last turn and truncate the newest message to a
-	short suffix. The newest message is always kept even when it alone busts the
-	budget - dropping it would send a prompt with nothing to answer.
+	Never drops the last user message (or truncates its text). Oversized non-user
+	messages are shortened in place (keep the end) before any message is deleted.
+	When a message must go, a `<tool_call>` is dropped with its following
+	`<tool_response>`s so remappers never see an orphan result.
 	"""
 	max_tokens = int(max_tokens or 0)
 	if max_tokens <= 0 or not messages:
 		return list(messages)
 	out = list(messages)
-	while len(out) > 1 and HeuristicTokensFromMessages(out) > max_tokens:
-		out = out[1:]
-	if out and HeuristicTokensFromMessages(out) > max_tokens:
-		m = dict(out[-1])
-		text = ContentToText(m.get("content"))
-		# Leave room for the per-message overhead HeuristicTokensFromMessages adds,
-		# otherwise the truncated message still measures over budget.
-		char_budget = max(64, (max_tokens - 4) * 4)
-		if len(text) > char_budget:
-			m["content"] = text[-char_budget:]
-			out[-1] = m
+	last_user = _LastUserIndex(out)
+
+	def over_budget():
+		return HeuristicTokensFromMessages(out) > max_tokens
+
+	def _fit_char_budget(idx):
+		others = HeuristicTokensFromMessages([m for j, m in enumerate(out) if j != idx])
+		remain = max_tokens - others
+		if remain <= 4:
+			return 0
+		return max(64, (remain - 4) * 4)
+
+	guard = 0
+	while len(out) > 1 and over_budget() and guard < 10000:
+		guard += 1
+		start = 1 if last_user == 0 else 0
+		trimmed = False
+		for i in range(start, len(out)):
+			if i == last_user:
+				continue
+			char_budget = _fit_char_budget(i)
+			if char_budget <= 0:
+				continue
+			text = ContentToText(out[i].get("content") if isinstance(out[i], dict) else "")
+			if len(text) > char_budget:
+				out[i] = _TruncateMsgSuffix(out[i], char_budget)
+				new = ContentToText(out[i].get("content") if isinstance(out[i], dict) else "")
+				if len(new) < len(text):
+					trimmed = True
+					break
+		if trimmed:
+			continue
+		prev_n = len(out)
+		out, last_user = _DropOldestTailGroup(out, last_user)
+		if len(out) >= prev_n:
+			break
+	if out and over_budget() and last_user != 0 and last_user != len(out) - 1:
+		idx = len(out) - 1
+		char_budget = _fit_char_budget(idx)
+		if char_budget > 0:
+			out[idx] = _TruncateMsgSuffix(out[idx], char_budget)
 	return out
 
 
@@ -303,30 +403,15 @@ def _SystemMessages(messages):
 	return out
 
 
-def BuildModelMessages(stub_old_media=True, sanitize=True):
-	"""Model-facing transcript: system + summary + keep-tail (no compact notices).
-
-	Keep-tail start is derived from the last compact notice in the transcript.
-	When sanitize=False, keeps internal markers (e.g. _aiui_summary) for usage breakdown.
-	"""
-	raw = list(getattr(E, "messages", None) or [])
-	if getattr(E, "_compact_bypass", False):
-		out = [m for m in raw if isinstance(m, dict)]
-		return _SanitizeModelMessages(out) if sanitize else out
-
-	if not CompactEnabled():
-		out = [m for m in raw if isinstance(m, dict) and not IsCompactNotice(m)]
-		return _SanitizeModelMessages(out) if sanitize else out
-
+def _WireSourceParts(raw):
+	"""System + keep-tail originals currently sent (no summary, no copies)."""
 	SyncCompactFromMessages(raw)
 	until = DeriveKeepStart(raw)
 	summary = str(getattr(E, "compact_summary", "") or "")
 	tail_budget = int(getattr(E, "compact_tail_tokens", 8000) or 8000)
-
 	system = _SystemMessages(raw[:until] if until else raw[:1])
 	if not system:
 		system = _SystemMessages(raw)
-
 	tail = []
 	for m in raw[until:]:
 		if not isinstance(m, dict) or IsCompactNotice(m):
@@ -334,9 +419,61 @@ def BuildModelMessages(stub_old_media=True, sanitize=True):
 		if _IsSystemMsg(m) and system:
 			continue
 		tail.append(m)
+	if summary:
+		capped = _CapTailByTokens(tail, tail_budget)
+	else:
+		capped = list(tail)
+	return system, summary, capped
 
-	# Media stubbing: treat the live keep-tail start (last user) separately from
-	# the compact boundary — older-than-live media still stubs even inside until:.
+
+def HiddenHistoryMessages():
+	"""Stored conversation messages that are not on the current model wire.
+
+	Chronological (oldest first). Skips compact notices and the live system/tail.
+	Empty when compaction is off (those turns were pruned) or nothing has been
+	folded/capped yet. -1 in tool indices is the last entry of this list.
+	"""
+	raw = list(getattr(E, "messages", None) or [])
+	if getattr(E, "_compact_bypass", False) or not CompactEnabled():
+		return []
+	system, _summary, capped = _WireSourceParts(raw)
+	visible = {id(m) for m in system}
+	visible.update(id(m) for m in capped)
+	hidden = []
+	for m in raw:
+		if not isinstance(m, dict) or IsCompactNotice(m):
+			continue
+		if id(m) in visible:
+			continue
+		hidden.append(m)
+	return hidden
+
+
+def HiddenHistoryIndexRange():
+	n = len(HiddenHistoryMessages())
+	if n <= 0:
+		return {"hidden": 0, "index_range": None}
+	return {"hidden": n, "index_range": {"start": -n, "end": -1}}
+
+
+def BuildModelMessages(stub_old_media=True, sanitize=True):
+	"""Model-facing transcript: system + summary + keep-tail (no compact notices).
+
+	Keep-tail start is derived from the last compact notice in the transcript.
+	The recent-tail token cap applies only after a summary exists; until then
+	the full conversation is sent (Context Token Budget triggers compact).
+	When sanitize=False, keeps internal markers (e.g. _aiui_summary) for usage breakdown.
+	"""
+	raw = list(getattr(E, "messages", None) or [])
+	if getattr(E, "_compact_bypass", False):
+		out = [m for m in raw if isinstance(m, dict)]
+		return _FinishModelMessages(out, sanitize)
+
+	if not CompactEnabled():
+		out = [m for m in raw if isinstance(m, dict) and not IsCompactNotice(m)]
+		return _FinishModelMessages(out, sanitize)
+
+	system, summary, capped = _WireSourceParts(raw)
 	live_keep = FindKeepTailStart(raw)
 	out = []
 	for m in system:
@@ -350,7 +487,6 @@ def BuildModelMessages(stub_old_media=True, sanitize=True):
 			),
 			"_aiui_summary": True,
 		})
-	capped = _CapTailByTokens(tail, tail_budget)
 	# Identity map — list.index uses == and can hit an earlier duplicate message.
 	raw_id_index = {id(m): i for i, m in enumerate(raw)}
 	for m in capped:
@@ -359,6 +495,12 @@ def BuildModelMessages(stub_old_media=True, sanitize=True):
 		if stub_old_media and idx is not None and idx < live_keep:
 			msg["content"] = StubMediaContent(msg.get("content"))
 		out.append(msg)
+	return _FinishModelMessages(out, sanitize)
+
+
+def _FinishModelMessages(messages, sanitize):
+	from lib import git_context
+	out = git_context.AttachGitContext(messages)
 	return _SanitizeModelMessages(out) if sanitize else out
 
 
@@ -366,7 +508,7 @@ def _SanitizeModelMessages(messages):
 	"""Drop internal keys so HF apply_chat_template / remote mappers only see wire fields."""
 	keep = {
 		"role", "content", "name", "tool_calls", "tool_call_id",
-		"_anthropic_content",
+		"_anthropic_content", "_reasoning_details", "_reasoning_pin",
 	}
 	out = []
 	for m in messages or []:

@@ -12,6 +12,7 @@ import json
 import gc
 import glob
 import random
+import re
 import threading
 import tempfile
 import importlib
@@ -115,14 +116,87 @@ def FormatToolMarkers(inner_txt, kind="tc"):
 
 def StripEmptyThinkTags(txt):
 	"""Remove empty / whitespace-only think blocks (raw XML or AIUI markers)."""
-	import re
 	s = str(txt or '')
 	prev = None
 	while prev != s:
 		prev = s
 		s = re.sub(r'<(think|thoughts)>\s*</\1>', '', s, flags=re.IGNORECASE)
 		s = re.sub(r'AIUI_THINK_START\s*AIUI_THINK_END', '', s)
-	return s
+	return CollapseDuplicateThinkBlocks(s)
+
+
+_THINK_BLOCK_RE = re.compile(
+	r"<(think|thoughts)>(.*?)</\1>",
+	re.IGNORECASE | re.DOTALL,
+)
+
+
+def CollapseDuplicateThinkBlocks(txt):
+	"""Merge adjacent <think> copies (native reasoning wrap + the same XML in content)."""
+	s = str(txt or "")
+	while True:
+		blocks = list(_THINK_BLOCK_RE.finditer(s))
+		changed = False
+		for i in range(len(blocks) - 1):
+			a, b = blocks[i], blocks[i + 1]
+			if s[a.end():b.start()].strip():
+				continue
+			na = re.sub(r"\s+", " ", a.group(2)).strip()
+			nb = re.sub(r"\s+", " ", b.group(2)).strip()
+			if not (na and nb and (na == nb or na.startswith(nb) or nb.startswith(na))):
+				continue
+			keep = b.group(0) if len(nb) > len(na) else a.group(0)
+			s = s[:a.start()] + keep + s[b.end():]
+			changed = True
+			break
+		if not changed:
+			return s
+
+
+_OPEN_THINK_TAGS = (("<think>", "</think>"), ("<thoughts>", "</thoughts>"))
+
+
+def CloseOrUnwrapOpenThink(txt):
+	"""Seal or drop a trailing unclosed `<think>` / `<thoughts>` wrapper.
+
+	Native reasoning is wrapped in these tags for the UI. If the stream ends
+	(or Stop) with no close tag and no tool XML after the open tag, unwrap so
+	the body is the visible reply. If a tool block sits inside the open think,
+	insert the close tag before that block.
+	"""
+	s = str(txt or "")
+	if not s:
+		return s
+	low = s.lower()
+	best = None
+	for open_t, close_t in _OPEN_THINK_TAGS:
+		pos = 0
+		lo, lc = open_t.lower(), close_t.lower()
+		while True:
+			i = low.find(lo, pos)
+			if i < 0:
+				break
+			j = low.find(lc, i + len(open_t))
+			if j < 0:
+				if best is None or i < best[2]:
+					best = (open_t, close_t, i)
+				break
+			pos = j + len(close_t)
+	if best is None:
+		return s
+	open_t, close_t, at = best
+	insert_at = None
+	for marker in ("<tool_call>", "<tool_response>"):
+		k = s.find(marker, at)
+		if k >= 0 and (insert_at is None or k < insert_at):
+			insert_at = k
+	if insert_at is not None:
+		head = s[:insert_at].rstrip()
+		return head + "\n" + close_t + "\n\n" + s[insert_at:]
+	body = s[at + len(open_t):]
+	if body.startswith("\n"):
+		body = body[1:]
+	return s[:at] + body
 
 
 # Shared EOS / turn closers: trailing trim (display) and local ID fallback when
@@ -151,4 +225,3 @@ def StripEnd(txt, ss):
 
 def StripStart(txt, ss):
 	return txt[len(ss):] if txt.startswith(ss) else txt
-

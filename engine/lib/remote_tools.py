@@ -85,20 +85,14 @@ def ApplyOpenAIToolFields(payload, enable_tooluse=None):
 def ApplyOpenAIThinkingFields(payload):
 	"""Map Enable Thinking / Reasoning Effort onto OpenAI-compat chat.completions.
 
-	- Always keep/refresh chat_template_kwargs for transformers serve (Qwen/Inkling).
-	- Also set top-level reasoning_effort for native OpenAI Chat Completions
-	  (ignored or rejected by servers that do not support it — same class of risk
-	  as chat_template_kwargs on non-serve endpoints).
-	- Enable Thinking False → reasoning_effort "none" (UI dropped None; this is the off switch).
+	- chat_template_kwargs only for custom/transformers serve (openai.com and
+	  OpenRouter reject unknown body fields).
+	- reasoning_effort for OpenRouter / serve; official OpenAI omits it when
+	  thinking is off and clamps xhigh/max to high.
 	"""
 	from lib import chat_template
 
 	ct_kw = chat_template.ThinkingKwargs(E)
-	if isinstance(ct_kw, dict) and ct_kw:
-		payload["chat_template_kwargs"] = ct_kw
-	else:
-		payload.pop("chat_template_kwargs", None)
-
 	et = str(getattr(E, "enable_thinking", "auto") or "auto").strip().lower()
 	re = str(getattr(E, "reasoning_effort", "auto") or "auto").strip().lower()
 	if re == "none":
@@ -106,21 +100,381 @@ def ApplyOpenAIThinkingFields(payload):
 	elif re == "minimal":
 		re = "low"
 
+	host = str(getattr(E, "remote_base_url", "") or "").strip().lower()
+	official_openai = "openai.com" in host or "api.openai" in host
+	serve_kw = bool(host) and not official_openai and "openrouter.ai" not in host
+	if serve_kw and isinstance(ct_kw, dict) and ct_kw:
+		payload["chat_template_kwargs"] = ct_kw
+	else:
+		payload.pop("chat_template_kwargs", None)
+
 	if et in ("false", "0", "no", "off"):
-		payload["reasoning_effort"] = "none"
+		if official_openai:
+			payload.pop("reasoning_effort", None)
+		else:
+			payload["reasoning_effort"] = "none"
 	elif re in ("low", "medium", "high", "xhigh", "max"):
+		if official_openai and re in ("xhigh", "max"):
+			re = "high"
 		payload["reasoning_effort"] = re
 	else:
 		payload.pop("reasoning_effort", None)
 	return payload
 
 
-def MapMessagesOpenAI(messages):
+def ParseToolResponseInner(payload):
+	"""XML <tool_response> body → (name, content, id)."""
+	name = "unknown"
+	body = payload
+	resp_id = ""
+	try:
+		data = json.loads(payload) if payload else {}
+		if isinstance(data, dict):
+			name = str(data.get("name") or name)
+			resp_id = str(data.get("id") or "")
+			body = data.get("content", payload)
+			if not isinstance(body, str):
+				body = json.dumps(body, ensure_ascii=False)
+	except Exception:
+		pass
+	return name, body, resp_id
+
+
+def TakePendingToolId(pending_ids, resp_id=None, fallback=""):
+	"""Bind a tool result to a pending call id.
+
+	Prefer an explicit resp_id still in the queue so out-of-order transcripts
+	do not FIFO-attach the wrong result. Otherwise take the next call-order id.
+	"""
+	rid = str(resp_id).strip() if resp_id else ""
+	if rid:
+		try:
+			pending_ids.remove(rid)
+			return rid
+		except ValueError:
+			pass
+	if pending_ids:
+		return pending_ids.pop(0)
+	return fallback
+
+
+_REASONING_TEXT_FIELDS = {
+	"reasoning.text": "text",
+	"reasoning.summary": "summary",
+	"reasoning.encrypted": "data",
+}
+
+
+def ReasoningDetailToDict(item):
+	"""Plain dict from an OpenRouter reasoning_details element (JSON or SDK object)."""
+	if isinstance(item, dict):
+		return dict(item)
+	dump = getattr(item, "model_dump", None)
+	if callable(dump):
+		try:
+			d = dump(exclude_none=False)
+			if isinstance(d, dict):
+				return d
+		except Exception:
+			pass
+	out = {}
+	for k in ("type", "text", "summary", "data", "signature", "id", "format", "index"):
+		v = getattr(item, k, None)
+		if v is not None:
+			out[k] = v
+	return out
+
+
+def _ReasoningDetailSlotKey(item):
+	if not isinstance(item, dict):
+		return None
+	if item.get("index") is not None:
+		return ("idx", item.get("index"), item.get("type"))
+	if item.get("id"):
+		return ("id", item.get("id"), item.get("type"))
+	return None
+
+
+def _MergeReasoningDetail(dst, src):
+	kind = str(dst.get("type") or src.get("type") or "")
+	field = _REASONING_TEXT_FIELDS.get(kind)
+	if field:
+		a = dst.get(field) or ""
+		b = src.get(field) or ""
+		if kind == "reasoning.encrypted":
+			if b and (not a or a == "[REDACTED]" or (b != "[REDACTED]" and len(b) >= len(a))):
+				dst[field] = b
+			elif b and b != "[REDACTED]":
+				dst[field] = (a + b) if a else b
+		elif b:
+			dst[field] = (a + b) if a else b
+	sig = src.get("signature")
+	if sig:
+		dst["signature"] = sig
+	for k, v in src.items():
+		if k in (field, "signature") or v in (None, ""):
+			continue
+		if dst.get(k) in (None, ""):
+			dst[k] = v
+
+
+def AccumulateReasoningDetails(acc, details):
+	"""Merge streaming reasoning_details chunks into acc (mutates acc)."""
+	if not acc:
+		acc = acc if acc is not None else []
+	if not details:
+		return acc
+	if not isinstance(details, list):
+		details = [details]
+	index = {}
+	for i, existing in enumerate(acc):
+		key = _ReasoningDetailSlotKey(existing)
+		if key is not None:
+			index[key] = i
+	for raw in details:
+		item = ReasoningDetailToDict(raw)
+		if not item:
+			continue
+		key = _ReasoningDetailSlotKey(item)
+		if key is not None and key in index:
+			_MergeReasoningDetail(acc[index[key]], item)
+			continue
+		acc.append(item)
+		if key is not None:
+			index[key] = len(acc) - 1
+	return acc
+
+
+def FinalizeReasoningDetails(acc):
+	"""Return a JSON-safe list, or None when empty."""
+	if not acc:
+		return None
+	out = [dict(x) for x in acc if isinstance(x, dict) and x]
+	if not out:
+		return None
+	if all(x.get("index") is not None for x in out):
+		out.sort(key=lambda x: x.get("index", 0))
+	return out
+
+
+def ReasoningDetailsFromMessage(msg):
+	"""Pull reasoning_details off a non-stream OpenAI/OpenRouter message."""
+	raw = None
+	if msg is None:
+		return None
+	if isinstance(msg, dict):
+		raw = msg.get("reasoning_details")
+	else:
+		raw = getattr(msg, "reasoning_details", None)
+		if raw is None:
+			extra = getattr(msg, "model_extra", None)
+			if isinstance(extra, dict):
+				raw = extra.get("reasoning_details")
+		if raw is None:
+			dump = SdkModelDump(msg)
+			if isinstance(dump, dict):
+				raw = dump.get("reasoning_details")
+	if not raw:
+		return None
+	acc = []
+	AccumulateReasoningDetails(acc, raw)
+	return FinalizeReasoningDetails(acc)
+
+
+def ReasoningTextFromDetails(details):
+	"""Visible reasoning.text fragments (for UI when the string channel is empty)."""
+	parts = []
+	for raw in details or []:
+		item = ReasoningDetailToDict(raw)
+		if item.get("type") == "reasoning.text":
+			t = item.get("text")
+			if isinstance(t, str) and t:
+				parts.append(t)
+	return "".join(parts)
+
+
+def HasEncryptedReasoning(details):
+	"""True when details include an encrypted / compaction blob bound to one endpoint."""
+	for raw in details or []:
+		item = ReasoningDetailToDict(raw)
+		if str(item.get("type") or "") == "reasoning.encrypted":
+			return True
+	return False
+
+
+def NormalizeOpenRouterProvider(raw):
+	s = str(raw or "").strip().replace(" ", "-")
+	return s.lower() if s else ""
+
+
+def IsOpenRouterAutoModel(model_id):
+	"""True for OpenRouter routers that pick a backend per request.
+
+	Matches `openrouter/auto`, `openrouter/auto-beta`, and `openrouter/free`.
+	"""
+	s = str(model_id or "").strip().lower()
+	return s.startswith("openrouter/auto") or s == "openrouter/free"
+
+
+def ReasoningPinFromDetails(details, *, model=None, provider=None):
+	"""Build a pin dict for the endpoint that produced these details, or None."""
+	if not HasEncryptedReasoning(details):
+		return None
+	pin = {}
+	mid = str(model or "").strip()
+	if mid and not IsOpenRouterAutoModel(mid):
+		pin["model"] = mid
+	prov = NormalizeOpenRouterProvider(provider)
+	if prov:
+		pin["provider"] = prov
+	# Only when OpenRouter actually routed to a ZDR variant (e.g. xai/zdr).
+	# xAI encrypted reasoning on the normal xai endpoint must not request zdr:
+	# accounts that have not opted into Zero Data Retention then 404.
+	if "zdr" in prov:
+		pin["zdr"] = True
+	return pin or None
+
+
+def SdkModelDump(obj):
+	"""Best-effort dict of a pydantic/SDK object, including unset extras."""
+	if obj is None:
+		return None
+	if isinstance(obj, dict):
+		return obj
+	dump = getattr(obj, "model_dump", None)
+	if callable(dump):
+		for kwargs in ({"exclude_unset": False}, {}):
+			try:
+				out = dump(**kwargs)
+				if isinstance(out, dict):
+					return out
+			except TypeError:
+				continue
+			except Exception:
+				break
+	as_dict = getattr(obj, "dict", None)
+	if callable(as_dict):
+		try:
+			out = as_dict()
+			if isinstance(out, dict):
+				return out
+		except Exception:
+			pass
+	extra = getattr(obj, "model_extra", None)
+	return extra if isinstance(extra, dict) else None
+
+
+def TranscriptReasoningPin(messages=None):
+	"""Most recent `_reasoning_pin` plus whether the transcript has encrypted details."""
+	raw = messages if messages is not None else (getattr(E, "messages", None) or [])
+	pin = None
+	encrypted = False
+	for m in raw:
+		if not isinstance(m, dict):
+			continue
+		details = m.get("_reasoning_details") or m.get("reasoning_details")
+		if HasEncryptedReasoning(details):
+			encrypted = True
+		p = m.get("_reasoning_pin")
+		if isinstance(p, dict) and (p.get("model") or p.get("provider") or p.get("zdr")):
+			pin = {k: v for k, v in p.items() if v not in (None, "", False)}
+			if p.get("zdr"):
+				pin["zdr"] = True
+	return pin, encrypted
+
+
+def ApplyReasoningRoutePin(create_kw, messages=None):
+	"""Force the producing OpenRouter model/endpoint when encrypted reasoning is in play.
+
+	`openrouter/auto` (and other routers) may pick a different endpoint on the next
+	tool round; encrypted xAI blobs 404 unless they go back to the original one.
+
+	Pin and encrypted are taken from the mapped wire (`create_kw["messages"]`) so a
+	compacted transcript cannot keep pinning after the blobs left the request.
+	"""
+	if not isinstance(create_kw, dict):
+		return create_kw
+	mapped = create_kw.get("messages")
+	if isinstance(mapped, list):
+		pin, encrypted = TranscriptReasoningPin(mapped)
+	else:
+		pin, encrypted = TranscriptReasoningPin(messages)
+	if not encrypted:
+		return create_kw
+	if not pin:
+		pin = {}
+	kw = dict(create_kw)
+	extra = dict(kw.get("extra_body") or {})
+	cur = str(kw.get("model") or "").strip()
+	pinned_model = str(pin.get("model") or "").strip()
+	changed = False
+	if pinned_model and (IsOpenRouterAutoModel(cur) or not cur or pinned_model != cur):
+		kw["model"] = pinned_model
+		changed = True
+	prov = {}
+	slug = NormalizeOpenRouterProvider(pin.get("provider"))
+	zdr = bool(pin.get("zdr"))
+	order = []
+	if slug:
+		if zdr and "/" not in slug:
+			order = [f"{slug}/zdr", slug]
+		else:
+			order = [slug]
+	if order:
+		prov["order"] = order
+		prov["allow_fallbacks"] = False
+		changed = True
+	if zdr:
+		prov["zdr"] = True
+		changed = True
+	if not changed:
+		return create_kw
+	if prov:
+		extra["provider"] = prov
+	if extra:
+		kw["extra_body"] = extra
+	from lib import ipc
+	ipc.LogErr(
+		f"OpenRouter: pinning encrypted reasoning model={kw.get('model')!r} "
+		f"provider={prov or None}"
+	)
+	return kw
+
+
+def _StealOpenAIPreface(out):
+	"""Merge a preceding bare assistant text turn into the following tool_calls message.
+
+	OpenRouter encrypted reasoning is one completion; storing think text separately
+	used to replay as assistant(text) then assistant(tool_calls + sidecar).
+	"""
+	if not out:
+		return ""
+	prev = out[-1]
+	if not isinstance(prev, dict) or prev.get("role") != "assistant":
+		return ""
+	if prev.get("tool_calls"):
+		return ""
+	if prev.get("reasoning_details"):
+		return ""
+	text = prev.get("content")
+	if not isinstance(text, str) or not text.strip():
+		return ""
+	text = _StripLeadingThink(text)
+	if not text:
+		return ""
+	out.pop()
+	return text.strip()
+
+
+def MapMessagesOpenAI(messages, replay_reasoning=False):
 	"""Rebuild OpenAI wire messages from AI UI XML transcript.
 
 	`messages` should already be role-normalized (assistant/user/system) with
 	multimodal content parts applied (e.g. from MessagesForRemote).
-	Stable tool_call_id: call_{msg_index}_{call_index}.
+	tool_call_id prefers the id stored on the XML call, else call_{msg}_{i}.
+	`replay_reasoning` adds OpenRouter `reasoning_details` (skip for openai.com).
+	Leading `<think>` is stripped from assistant `content` the same way as
+	Anthropic: native reasoning stays on the sidecar, not as XML in the body.
 	"""
 	from lib import tool_calls as tc_mod
 
@@ -133,15 +487,44 @@ def MapMessagesOpenAI(messages):
 		role = str(m.get("role") or "user")
 		content = m.get("content")
 		if role != "assistant" or not isinstance(content, str):
-			out.append(dict(m))
+			item = {k: v for k, v in dict(m).items() if not str(k).startswith("_")}
+			out.append(item)
 			continue
+		sidecar = m.get("_reasoning_details") if replay_reasoning else None
+		pin = m.get("_reasoning_pin") if replay_reasoning else None
+		sidecar_used = False
+		raw_content = content
+		content = _StripLeadingThink(content)
+
+		def AttachReasoning(msg):
+			nonlocal sidecar_used
+			if sidecar_used or not sidecar:
+				return
+			msg["reasoning_details"] = sidecar
+			if isinstance(pin, dict) and pin:
+				msg["_reasoning_pin"] = pin
+			sidecar_used = True
+
 		if "<tool_call>" not in content and "<tool_response>" not in content:
-			out.append(dict(m))
+			if not content:
+				if sidecar:
+					item = {"role": "assistant", "content": None}
+					AttachReasoning(item)
+					out.append(item)
+				else:
+					inner = _WholeMessageThinkInner(raw_content)
+					if inner:
+						out.append({"role": "assistant", "content": inner})
+				continue
+			item = {"role": "assistant", "content": content}
+			AttachReasoning(item)
+			out.append(item)
 			continue
 
 		buf_text = []
 		pending_calls = []
 		call_i = 0
+		prior_text = _StealOpenAIPreface(out) if "<tool_call>" in content else ""
 
 		def FlushText():
 			nonlocal buf_text
@@ -150,14 +533,19 @@ def MapMessagesOpenAI(messages):
 			joined = "\n\n".join(buf_text).strip()
 			buf_text = []
 			if joined:
-				out.append({"role": "assistant", "content": joined})
+				msg = {"role": "assistant", "content": joined}
+				AttachReasoning(msg)
+				out.append(msg)
 
 		def FlushCalls():
-			nonlocal pending_calls, buf_text
+			nonlocal pending_calls, buf_text, prior_text
 			if not pending_calls:
 				return
 			preface = "\n\n".join(buf_text).strip() if buf_text else ""
 			buf_text = []
+			if prior_text:
+				preface = prior_text + ("\n\n" + preface if preface else "")
+				prior_text = ""
 			tc_list = []
 			for c in pending_calls:
 				args = c.get("arguments") or {}
@@ -174,6 +562,7 @@ def MapMessagesOpenAI(messages):
 			pending_calls = []
 			msg = {"role": "assistant", "tool_calls": tc_list}
 			msg["content"] = preface if preface else None
+			AttachReasoning(msg)
 			out.append(msg)
 
 		for kind, payload in tc_mod.SplitToolSegments(content):
@@ -187,7 +576,7 @@ def MapMessagesOpenAI(messages):
 					buf_text.append("<tool_call>" + payload + "</tool_call>")
 					continue
 				for one in parsed:
-					tid = f"call_{msg_i}_{call_i}"
+					tid = str(one.get("id") or "").strip() or f"call_{msg_i}_{call_i}"
 					call_i += 1
 					pending_calls.append({
 						"id": tid,
@@ -198,25 +587,19 @@ def MapMessagesOpenAI(messages):
 				# Preface + tool_calls share one assistant message when possible.
 				FlushCalls()
 				FlushText()
-				name = "unknown"
-				body = payload
-				try:
-					data = json.loads(payload) if payload else {}
-					if isinstance(data, dict):
-						name = str(data.get("name") or name)
-						body = data.get("content", payload)
-						if not isinstance(body, str):
-							body = json.dumps(body, ensure_ascii=False)
-				except Exception:
-					pass
-				tid = pending_ids.pop(0) if pending_ids else f"call_{msg_i}_orphan_{call_i}"
+				_name, body, resp_id = ParseToolResponseInner(payload)
+				tid = TakePendingToolId(
+					pending_ids, resp_id, fallback=f"call_{msg_i}_orphan_{call_i}",
+				)
 				out.append({
 					"role": "tool",
 					"tool_call_id": tid,
-					"name": name,
 					"content": body if isinstance(body, str) else str(body),
 				})
 		FlushCalls()
+		if prior_text:
+			buf_text.insert(0, prior_text)
+			prior_text = ""
 		FlushText()
 
 	return out
@@ -404,14 +787,36 @@ def ApplyAnthropicThinkingFields(payload):
 	return payload
 
 
-def ApplyAnthropicCacheFields(payload):
-	"""Top-level automatic ephemeral cache when remote_prompt_cache is on."""
+def _PromptCacheOn():
 	on = getattr(E, "remote_prompt_cache", 1)
 	try:
 		on = int(on)
 	except (TypeError, ValueError):
 		on = 1
-	if on:
+	return bool(on)
+
+
+def ApplyAnthropicCacheFields(payload):
+	"""Top-level automatic ephemeral cache when remote_prompt_cache is on."""
+	if _PromptCacheOn():
+		payload["cache_control"] = {"type": "ephemeral"}
+	else:
+		payload.pop("cache_control", None)
+	return payload
+
+
+def ApplyOpenAICacheFields(payload):
+	"""OpenRouter automatic cache breakpoint (Anthropic-style top-level cache_control).
+
+	openai.com and transformers serve reject unknown body fields. Grok/OpenAI
+	on OpenRouter ignore the field; Claude-via-OpenRouter uses it to advance
+	the cache as the conversation grows.
+	"""
+	host = str(getattr(E, "remote_base_url", "") or "").strip().lower()
+	if "openrouter.ai" not in host:
+		payload.pop("cache_control", None)
+		return payload
+	if _PromptCacheOn():
 		payload["cache_control"] = {"type": "ephemeral"}
 	else:
 		payload.pop("cache_control", None)
@@ -507,9 +912,9 @@ def _StripLeadingThink(text):
 
 	Reasoning always opens a reply, so anchoring to the start leaves think tags
 	that appear mid-message (code examples, quoted markup) untouched. On the
-	Anthropic wire reasoning belongs in `thinking` blocks, so an inline copy is
-	either a duplicate of the signed block or unsigned text Claude should not
-	see replayed as its own words.
+	wire, native reasoning belongs in the sidecar (`reasoning_details` /
+	Anthropic `thinking` blocks). An inline copy is a duplicate the model
+	should not see replayed as its own words.
 	"""
 	s = str(text or "")
 	while True:
@@ -517,6 +922,19 @@ def _StripLeadingThink(text):
 		if trimmed == s:
 			return s.strip()
 		s = trimmed
+
+
+_WHOLE_THINK_RE = re.compile(
+	r"<(think|thoughts)\b[^>]*>(.*?)</\1>",
+	re.IGNORECASE | re.DOTALL,
+)
+
+
+def _WholeMessageThinkInner(text):
+	"""Inner text when the whole message is one think block, else empty."""
+	s = str(text or "").strip()
+	m = _WHOLE_THINK_RE.fullmatch(s)
+	return m.group(2).strip() if m else ""
 
 
 def ThinkingLeadBlocks(sidecar):
@@ -658,18 +1076,10 @@ def MapMessagesAnthropic(messages):
 			elif kind == "tool_response":
 				FlushCalls()
 				FlushText()
-				name = "unknown"
-				body = payload
-				try:
-					data = json.loads(payload) if payload else {}
-					if isinstance(data, dict):
-						name = str(data.get("name") or name)
-						body = data.get("content", payload)
-						if not isinstance(body, str):
-							body = json.dumps(body, ensure_ascii=False)
-				except Exception:
-					pass
-				tid = pending_ids.pop(0) if pending_ids else f"toolu_{msg_i}_orphan_{call_i}"
+				_name, body, resp_id = ParseToolResponseInner(payload)
+				tid = TakePendingToolId(
+					pending_ids, resp_id, fallback=f"toolu_{msg_i}_orphan_{call_i}",
+				)
 				out.append({
 					"role": "user",
 					"content": [{

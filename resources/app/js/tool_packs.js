@@ -13,6 +13,7 @@ function DefaultNativePacks(tools_file) {
 	const enable_math = (mode === 'math' || mode === 'merge' || mode === 'custom');
 	const enable_web = (mode === 'research' || mode === 'merge' || mode === 'custom');
 	return [
+		{ id: 'native:utils', kind: 'native', name: 'Utils', enabled: true, disabled_tools: [], permission_mode: 'auto' },
 		{ id: 'native:math', kind: 'native', name: 'Math', enabled: enable_math, disabled_tools: [], permission_mode: 'ask' },
 		{ id: 'native:web', kind: 'native', name: 'Web', enabled: enable_web, disabled_tools: [], permission_mode: 'ask' },
 		{
@@ -89,7 +90,7 @@ export function NormalizeMergedPacks(packs, tools_file) {
 		const out = Object.assign({}, p, {
 			enabled: prev ? prev.enabled : p.enabled,
 			disabled_tools: prev ? prev.disabled_tools : (p.disabled_tools || []),
-			permission_mode: prev ? prev.permission_mode : 'ask',
+			permission_mode: prev ? prev.permission_mode : NormPermMode(p.permission_mode),
 			disabled_defaults_applied: prev
 				? (prev.disabled_defaults_applied || [])
 				: (p.disabled_defaults_applied || [])
@@ -318,9 +319,9 @@ export function OpenPackDialog(idx) {
 			<input type="text" id="pack_mcp_command" class="cfg_txt" value="${EncodeHTML(pack.command || '')}" placeholder="/path/to/python">
 			<span class="cfg_lbl">Args (JSON array) <img class="help_icon" width="16" height="16" title='Command-line arguments as a JSON array, e.g. ["-m","cait.server"].' /></span>
 			<input type="text" id="pack_mcp_args" class="cfg_txt" value="${EncodeHTML(JSON.stringify(pack.args || []))}">
-			<span class="cfg_lbl">Working Directory <img class="help_icon" width="16" height="16" title="Optional cwd for the MCP process. Leave blank to use the default." /></span>
+			<span class="cfg_lbl">Working Directory <img class="help_icon" width="16" height="16" title="Optional cwd for the MCP process (the server install). Tokens like \${workspaceFolder} expand at start (open project, or ~/.aiui on Home). Leave blank to use the default." /></span>
 			<input type="text" id="pack_mcp_cwd" class="cfg_txt" value="${EncodeHTML(pack.cwd || '')}" placeholder="/path/to/CAIT">
-			<span class="cfg_lbl">Env (JSON object) <img class="help_icon" width="16" height="16" title='Optional environment variables as a JSON object, e.g. {"PYTHONPATH":"/path/to/CAIT"}.' /></span>
+			<span class="cfg_lbl">Env (JSON object) <img class="help_icon" width="16" height="16" title='Environment variables as JSON. \${workspaceFolder} expands at start. Example: {"PYTHONPATH":"/path/to/CAIT","CAIT_WORKSPACE":"\${workspaceFolder}"}.' /></span>
 			<input type="text" id="pack_mcp_env" class="cfg_txt" value="${EncodeHTML(JSON.stringify(pack.env || {}))}">
 			${AutoAllowSelectHtml(pack)}
 		`);
@@ -337,7 +338,7 @@ export function OpenPackDialog(idx) {
 	} else if (pack.id === 'native:coding') {
 		const sandOn = pack.sandbox !== false;
 		$settings.append(`
-			<span class="cfg_lbl">Sandbox Paths <img class="help_icon" width="16" height="16" title="When True, path-based coding tools may only touch paths under the open project (or ~/.aiui on Home). When False, absolute paths elsewhere are allowed; relative paths still use that root. run_command always starts in the workspace root and is not path-sandboxed." /></span>
+			<span class="cfg_lbl">Sandbox Paths <img class="help_icon" width="16" height="16" title="When True, path-based coding tools may only touch paths under the open project (and ~/.aiui/skills, ~/.aiui/rules, ~/.aiui/agents or ~/.aiui on Home). When False, absolute paths elsewhere are allowed; relative paths still use that root. run_command always starts in the workspace root and is not path-sandboxed." /></span>
 			<select id="pack_files_sandbox" class="cfg_drp">
 				<option value="1"${sandOn ? ' selected' : ''}>True</option>
 				<option value="0"${sandOn ? '' : ' selected'}>False</option>
