@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const validSend = [
 	'show-alert', 'save-recording', 'send-msg', 'attach-files',
-	'copy-text', 'read-text', 'gen-text', 'save-voice', 'clone-voice', 'gen-speech',
+	'copy-text', 'copy-text-silent', 'read-text', 'gen-text', 'save-voice', 'clone-voice', 'gen-speech',
 	'copy-image', 'gen-image', 'run-cmd', 'check-models', 'show-menubar',
 	'config-app', 'config-app-other', 'config-app-remote', 'config-other', 'config-ai', 'config-tools',
 	'config-prompt-files',
@@ -17,6 +17,7 @@ const validInvoke = [
 	'prepare-avatar',
 	'session-autosave', 'session-new', 'session-load', 'session-open-project',
 	'session-close-project', 'session-get-context',
+	'prompt-files-stamp',
 	'mcp-open-editor', 'mcp-refresh-packs', 'confirm-action',
 	'tool-permission-result'
 ];
@@ -28,7 +29,8 @@ const validReceive = [
 	'append-log', 'init-ui', 'ai-ready', 'set-platform', 'start-recording', 'stop-recording',
 	'add-voices', 'clear-voices', 'play-audio', 'got-avatar', 'got-tools', 'got-tool-catalog', 'got-file',
 	'got-models', 'prompt-msg', 'load-config', 'prompt-files',
-	'session-context', 'session-loaded', 'session-cleared', 'session-picker', 'tool-permission'
+	'session-context', 'session-loaded', 'session-cleared', 'session-picker', 'tool-permission',
+	'set-side-panel'
 ];
 
 contextBridge.exposeInMainWorld('aiuiAPI', {

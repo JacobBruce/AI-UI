@@ -17,10 +17,14 @@ export {
 	RemoveFile, FileDragDrop, FileDragOver
 };
 
-/** Rich markdown/BBCode for the newest N transcript messages on session load. */
-const REPLAY_RICH_LIMIT = 32;
+/** User/assistant bubbles painted on session load vs each scroll-up prepend. */
+const REPLAY_CHAT_INITIAL = 32;
+const REPLAY_CHAT_PREPEND = 8;
 let chatStickBottom = true;
 let chatScrollLock = false;
+let replayCollapsed = [];
+let replayPaintFrom = 0;
+let replayPrepending = false;
 
 /** Last clip that can be replayed: video (mp4 has audio) or audio-only TTS — never both. */
 let lastReplay = null;
@@ -316,12 +320,12 @@ function SyncChatScrollBtn() {
 function OnChatLogUserScroll() {
 	const el = document.getElementById('chat_log');
 	if (!el) return;
-	// User gesture wins over in-flight programmatic scroll.
 	if (!IsChatNearBottom(el)) {
 		chatScrollLock = false;
 		chatStickBottom = false;
 	}
 	SyncChatScrollBtn();
+	if (el.scrollTop <= 64) MaybePrependReplay();
 }
 
 function WireChatScrollUi() {
@@ -329,7 +333,8 @@ function WireChatScrollUi() {
 	if (!el || el._aiuiScrollWired) return;
 	el._aiuiScrollWired = true;
 	el.addEventListener('scroll', OnChatLogUserScroll, { passive: true });
-	el.addEventListener('wheel', function () {
+	el.addEventListener('wheel', function (e) {
+		if (e.deltaY < 0 && el.scrollTop <= 64) MaybePrependReplay();
 		requestAnimationFrame(OnChatLogUserScroll);
 	}, { passive: true });
 	if (typeof ResizeObserver === 'function') {
@@ -398,7 +403,7 @@ export async function SendMsg() {
 	for (let i=0; i<messages.length; ++i) {
 		let msg = messages[i].trim();
 		if (msg == '') continue;
-		html_msg += '<div class="msg_box"><div class="chat_msg">';
+		html_msg += '<div class="msg_box"><div class="chat_msg"'+EditMdAttr(msg)+'>';
 		if (state.format_mode == 1) {
 			html_msg += ConvertBB(EncodeHTML(EncodeBB(msg)));
 		} else if (state.format_mode == 2) {
@@ -436,6 +441,7 @@ export async function SendMsg() {
 			if ($(this).attr("data-highlighted") != "yes") hljs.highlightElement(this);
 		});
 	}
+	RefreshUserEditButton();
 	$('#edit_dialog').addClass('hidden');
 	DisableButtons(true, state.gen_mode != 1);
 	chatStickBottom = true;
@@ -452,6 +458,8 @@ export async function RedoLast() {
 		msg: 'Regenerate the last reply? The current last assistant message will be removed.'
 	});
 	if (!ok) return;
+	const editing = $('#chat_log .chat_msg.editing');
+	if (editing.length) CancelUserEdit(editing.first());
 	const $last = $('#chat_log > .msg_box').last();
 	if ($last.length && $last.children('.bot_msg').length) {
 		$last.remove();
@@ -699,10 +707,13 @@ function PaintStreamBox(finalize) {
 	} else {
 		ClearToolRunTimer();
 	}
-	state.streaming_bmbl.html('<div class="bot_msg">'+html+'</div>');
+	state.streaming_bmbl.html('<div class="bot_msg"'+CopyMdAttr(withCompact)+'>'+html+'</div>');
 	if (html.trim() !== '') state.streaming_bmbl.removeClass('hidden').show();
 	if (finalize) FinalizeBotBox(state.streaming_bmbl);
-	else GroupAgentActionDetails(state.streaming_bmbl);
+	else {
+		GroupAgentActionDetails(state.streaming_bmbl);
+		MountBotCopyButtons(state.streaming_bmbl);
+	}
 	if (!finalize) StickLiveThinkScroll();
 	ScrollChatToBottom(false);
 }
@@ -755,6 +766,230 @@ function IsEmptyParagraph(el) {
 	const $el = $(el);
 	if ($el.find('img, video, audio, iframe, details, pre, table, svg, object, embed').length) return false;
 	return $el.text().replace(/\u00a0/g, ' ').trim() === '';
+}
+
+function BotAnswerMarkdown(raw) {
+	let bot_msg = StripEmptyThinkTags(String(raw || '').replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_BR]", "\n").trim());
+	if (!bot_msg) return '';
+	const wrapped = WrapAiXmlTags(bot_msg);
+	const { text } = ExtractAiuiBlocks(wrapped);
+	return String(text || '')
+		.replace(/\n*AIUIBLOCK\d+X\n*/g, '\n\n')
+		.replace(/[ \t]+$/gm, '')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+}
+
+function EncodeCopyMd(text) {
+	const bytes = new TextEncoder().encode(String(text || ''));
+	let bin = '';
+	const chunk = 0x8000;
+	for (let i = 0; i < bytes.length; i += chunk) {
+		bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+	}
+	return btoa(bin);
+}
+
+function DecodeCopyMd(b64) {
+	try {
+		const bin = atob(String(b64 || ''));
+		const bytes = new Uint8Array(bin.length);
+		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+		return new TextDecoder().decode(bytes);
+	} catch (e) {
+		return '';
+	}
+}
+
+function CopyMdAttr(raw) {
+	const md = BotAnswerMarkdown(raw);
+	if (!md) return '';
+	return ' data-copy-md="' + EncodeCopyMd(md) + '"';
+}
+
+const COPY_BTN_HTML = '<button type="button" class="msg_icon_btn msg_copy_btn" title="Copy markdown" aria-label="Copy markdown">'
+	+ '<svg class="copy_icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">'
+	+ '<rect x="5.5" y="1.5" width="8.5" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.25"/>'
+	+ '<rect class="copy_front" x="2" y="4.5" width="8.5" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.25"/>'
+	+ '</svg>'
+	+ '<svg class="copy_check" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">'
+	+ '<path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M3.5 8.5l3 3 6-6.5"/>'
+	+ '</svg></button>';
+
+const EDIT_BTN_HTML = '<button type="button" class="msg_icon_btn msg_edit_btn" title="Edit and redo" aria-label="Edit and redo">'
+	+ '<svg class="edit_pen" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">'
+	+ '<path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" d="M9.7 2.8l3.5 3.5-8.2 8.2H1.5v-3.5z"/>'
+	+ '<path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" d="M8.5 4l3.5 3.5"/>'
+	+ '</svg>'
+	+ '<svg class="edit_save" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">'
+	+ '<path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" d="M3.25 2.5h7.35L13.5 5.4V13.5H3.25V2.5z"/>'
+	+ '<path fill="none" stroke="currentColor" stroke-width="1.25" d="M5.25 2.5v3.6h5.1V2.5"/>'
+	+ '<path fill="none" stroke="currentColor" stroke-width="1.25" d="M5.5 9.2h5v4.3h-5z"/>'
+	+ '</svg></button>';
+
+function EditMdAttr(text) {
+	const md = String(text || '').replaceAll("[AI_UI_TAB]", "\t").replaceAll("[AI_UI_BR]", "\n").trim();
+	if (!md) return '';
+	return ' data-edit-md="' + EncodeCopyMd(md) + '"';
+}
+
+function ChatMsgKeep($msg) {
+	return $msg.find('> .files_head, > .msg_file, > .msg_edit_btn');
+}
+
+function StopOutsideEditListen() {
+	$(document).off('mousedown.userEdit');
+}
+
+function StartOutsideEditListen($msg) {
+	StopOutsideEditListen();
+	setTimeout(function () {
+		$(document).on('mousedown.userEdit', function (e) {
+			if ($(e.target).closest('.chat_msg.editing').length) return;
+			CancelUserEdit($msg);
+		});
+	}, 0);
+}
+
+function ClearChatMsgEditSize($msg) {
+	$msg.css({ 'min-width': '', 'width': '', 'height': '', 'max-height': '' });
+}
+
+function HighlightChatMsg($msg) {
+	$msg.find("pre.code_box code").each(function () {
+		if ($(this).attr("data-highlighted") != "yes") hljs.highlightElement(this);
+	});
+	$msg.find('p').each(function () { if ($(this).html().trim() == '') this.remove(); });
+}
+
+function RefreshUserEditButton() {
+	const $msgs = $('#chat_log .chat_msg[data-edit-md]');
+	$msgs.each(function (i) {
+		const last = i === $msgs.length - 1;
+		const $msg = $(this);
+		if (!last && $msg.hasClass('editing')) CancelUserEdit($msg, true);
+		$msg.find('> .msg_edit_btn').remove();
+	});
+	const $last = $msgs.last();
+	if (!$last.length) return;
+	$last.append(EDIT_BTN_HTML);
+	if ($last.hasClass('editing')) {
+		$last.find('> .msg_edit_btn').addClass('saving')
+			.attr('title', 'Redo with edits')
+			.attr('aria-label', 'Redo with edits');
+	}
+}
+
+function PaintChatMsgBody($msg, text) {
+	StopOutsideEditListen();
+	const keep = ChatMsgKeep($msg).detach();
+	$msg.removeClass('editing');
+	ClearChatMsgEditSize($msg);
+	$msg.empty();
+	$msg.append(FormatMsgHtml(text, false, true));
+	$msg.append(keep.filter('.files_head, .msg_file'));
+	HighlightChatMsg($msg);
+}
+
+function CancelUserEdit($msg, skipRefresh) {
+	if (!$msg || !$msg.length) return;
+	const md = DecodeCopyMd($msg.attr('data-edit-md'));
+	PaintChatMsgBody($msg, md);
+	if (!skipRefresh) RefreshUserEditButton();
+}
+
+function BeginUserEdit($msg) {
+	if (state.thinking || state.generating) return;
+	if (!$msg || !$msg.length || $msg.hasClass('editing')) return;
+	const md = DecodeCopyMd($msg.attr('data-edit-md'));
+	if (!md) return;
+	const w = Math.round($msg.outerWidth());
+	const h = Math.round($msg.outerHeight());
+	$msg.css({
+		'min-width': w + 'px',
+		'width': w + 'px',
+		'height': h + 'px',
+		'max-height': h + 'px'
+	});
+	const keep = ChatMsgKeep($msg).detach();
+	$msg.addClass('editing').empty();
+	const $ta = $('<textarea class="msg_edit_area" rows="1" spellcheck="true"></textarea>');
+	$ta.val(md);
+	$msg.append($ta);
+	$msg.append(keep);
+	RefreshUserEditButton();
+	$ta.on('keydown', function (e) {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			CancelUserEdit($msg);
+			return;
+		}
+		if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+			e.preventDefault();
+			SaveUserEdit($msg);
+		}
+	});
+	$ta.focus();
+	const el = $ta[0];
+	el.selectionStart = el.selectionEnd = el.value.length;
+	StartOutsideEditListen($msg);
+}
+
+async function SaveUserEdit($msg) {
+	if (!$msg || !$msg.length || !$msg.hasClass('editing')) return;
+	if (state.thinking || state.generating) return;
+	const $ta = $msg.find('> .msg_edit_area');
+	const text = String($ta.val() || '').trim();
+	if (!text) return;
+	StopOutsideEditListen();
+	const fitWarn = OversizedSendWarning(text);
+	if (fitWarn) {
+		const ok = await ipcRenderer.invoke('confirm-action', {
+			title: 'Message may not fit',
+			msg: fitWarn,
+		});
+		if (!ok) {
+			StartOutsideEditListen($msg);
+			return;
+		}
+	}
+	$msg.attr('data-edit-md', EncodeCopyMd(text));
+	PaintChatMsgBody($msg, text);
+	$msg.closest('.msg_box').nextAll('.msg_box').remove();
+	RefreshUserEditButton();
+	DisableButtons(true, state.gen_mode != 1);
+	chatStickBottom = true;
+	StartThinking();
+	ipcRenderer.send('send-msg', {
+		cmd: 'redo_last',
+		text: text.replaceAll('\n', '[AI_UI_BR]')
+	});
+}
+
+function ToggleUserEdit(btn) {
+	const $msg = $(btn).closest('.chat_msg');
+	if (!$msg.length) return;
+	if ($msg.hasClass('editing')) SaveUserEdit($msg);
+	else BeginUserEdit($msg);
+}
+
+function MountBotCopyButtons(box) {
+	if (!box || !box.length) return;
+	box.find('div.bot_msg').each(function () {
+		const $bot = $(this);
+		$bot.find('> .msg_copy_btn').remove();
+		if ($bot.attr('data-copy-md')) $bot.append(COPY_BTN_HTML);
+	});
+}
+
+function CopyBotMarkdown(btn) {
+	const bot = btn && btn.closest ? btn.closest('.bot_msg') : null;
+	const md = DecodeCopyMd(bot && bot.getAttribute('data-copy-md'));
+	if (!md) return;
+	ipcRenderer.send('copy-text-silent', { txt: md });
+	btn.classList.add('copied');
+	clearTimeout(btn._copyT);
+	btn._copyT = setTimeout(function () { btn.classList.remove('copied'); }, 1200);
 }
 
 function FormatBotHtml(raw, rich=true) {
@@ -835,19 +1070,147 @@ function FormatReplayAttachments(files) {
 	return FormatAttachmentsBlock(files);
 }
 
-export function ReplayChatMessages(messages, init_prompt) {
+function IsReplayChatBubble(item) {
+	return item && item.kind === 'chat';
+}
+
+function IsReplayUserChat(item) {
+	return IsReplayChatBubble(item) && !item.as_bot;
+}
+
+function ResetReplayWindow() {
+	replayCollapsed = [];
+	replayPaintFrom = 0;
+	replayPrepending = false;
+}
+
+function FindReplaySliceStart(collapsed, chatLimit, beforeIndex) {
+	const end = beforeIndex == null ? collapsed.length : beforeIndex;
+	if (end <= 0) return 0;
+	let n = 0;
+	let start = 0;
+	let hit = false;
+	for (let i = end - 1; i >= 0; i--) {
+		if (!IsReplayChatBubble(collapsed[i])) continue;
+		n++;
+		if (n >= chatLimit) {
+			start = i;
+			hit = true;
+			break;
+		}
+	}
+	if (!hit) return 0;
+	while (start > 0 && !IsReplayUserChat(collapsed[start])) start--;
+	return start;
+}
+
+function HtmlForReplayItems(items) {
 	const decodeBr = (t) => String(t || '').replaceAll('[AI_UI_BR]', '\n');
-	const prompt_txt = decodeBr(
-		(init_prompt != null && init_prompt !== '')
-			? init_prompt
-			: (messages && messages[0] && messages[0].role === 'system' ? (messages[0].content || '') : (state.prompt || ''))
-	);
-	state.prompt = prompt_txt;
-	$('#prompt_txta').val(prompt_txt);
-	const preview = (prompt_txt || '').trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0] || 'New session';
-	$('#init_prompt').html(EncodeHTML(preview));
-	$('#prompt_bar').removeClass('hidden');
 	let html = '';
+	for (let i = 0; i < items.length; ++i) {
+		const item = items[i];
+		if (item.kind === 'compact') {
+			html += '<div class="msg_box"><div class="bot_msg">'
+				+ FormatBotHtml(CompactMarkerRaw(item.m.content || '', item.m.compact_count), true)
+				+ '</div></div>';
+			continue;
+		}
+		if (item.kind === 'tool') {
+			const t = decodeBr(typeof item.m.content === 'string' ? item.m.content : JSON.stringify(item.m.content || ''));
+			html += '<div class="msg_box"><div class="bot_msg"><div class="dark_bg"><small>tool'+(item.m.name ? ' - '+EncodeHTML(item.m.name) : '')+'</small><pre class="tool_pre">'+EncodeHTML(t)+'</pre></div></div></div>';
+			continue;
+		}
+		if (item.kind === 'tool_calls') {
+			html += '<div class="msg_box"><div class="bot_msg"><div class="dark_bg"><small>tool_call</small><pre class="tool_pre">'+EncodeHTML(JSON.stringify(item.m.tool_calls, null, 2))+'</pre></div></div></div>';
+			continue;
+		}
+		const cls = item.as_bot ? 'bot_msg' : 'chat_msg';
+		let body = '';
+		let extraAttr = '';
+		if (item.as_bot) {
+			const raw = (item.compact
+				? CompactMarkerRaw(item.compact.content || '', item.compact.compact_count) + '\n\n'
+				: '') + item.text;
+			body = FormatBotHtml(raw, true);
+			extraAttr = CopyMdAttr(raw);
+		} else {
+			body = FormatMsgHtml(item.text, false, true);
+			extraAttr = EditMdAttr(item.text);
+		}
+		html += '<div class="msg_box"><div class="'+cls+'"'+extraAttr+'>'+body+FormatReplayAttachments(item.files)+'</div></div>';
+	}
+	return html;
+}
+
+function InsertReplayHtml(html, prepend) {
+	if (!html) return $();
+	const $nodes = $('<div></div>').html(html).children();
+	if (prepend) {
+		const $first = $('#chat_log > .msg_box').first();
+		if ($first.length) $first.before($nodes);
+		else $('#compact_run_status').after($nodes);
+	} else {
+		$('#chat_log').append($nodes);
+	}
+	FinalizeBotBox($nodes, true, !prepend);
+	return $nodes;
+}
+
+/** Keep the reading position when prepended nodes grow (late-loading images). */
+function AnchorPrependScroll(el, $nodes) {
+	if (!el || !$nodes || !$nodes.length) return;
+	let h = el.scrollHeight;
+	const ro = new ResizeObserver(() => {
+		const nh = el.scrollHeight;
+		if (nh === h) return;
+		el.scrollTop += nh - h;
+		h = nh;
+	});
+	$nodes.each(function () { ro.observe(this); });
+	const stop = () => { ro.disconnect(); };
+	const pending = $nodes.find('img').toArray().filter((img) => !img.complete);
+	if (!pending.length) {
+		requestAnimationFrame(stop);
+		return;
+	}
+	let left = pending.length;
+	const one = () => {
+		left--;
+		if (left <= 0) requestAnimationFrame(stop);
+	};
+	pending.forEach((img) => {
+		img.addEventListener('load', one, { once: true });
+		img.addEventListener('error', one, { once: true });
+	});
+}
+
+function MaybePrependReplay() {
+	if (replayPrepending || replayPaintFrom <= 0) return false;
+	const el = document.getElementById('chat_log');
+	if (!el || el.scrollTop > 64) return false;
+	replayPrepending = true;
+	try {
+		const nextFrom = FindReplaySliceStart(replayCollapsed, REPLAY_CHAT_PREPEND, replayPaintFrom);
+		const items = replayCollapsed.slice(nextFrom, replayPaintFrom);
+		if (!items.length) {
+			replayPaintFrom = nextFrom;
+			return false;
+		}
+		const oldH = el.scrollHeight;
+		const oldTop = el.scrollTop;
+		replayPaintFrom = nextFrom;
+		const $nodes = InsertReplayHtml(HtmlForReplayItems(items), true);
+		el.scrollTop = oldTop + (el.scrollHeight - oldH);
+		AnchorPrependScroll(el, $nodes);
+		SyncChatScrollBtn();
+		return true;
+	} finally {
+		replayPrepending = false;
+	}
+}
+
+function BuildReplayCollapsed(messages) {
+	const decodeBr = (t) => String(t || '').replaceAll('[AI_UI_BR]', '\n');
 	const list = Array.isArray(messages) ? messages : [];
 	const display = [];
 	let pendingCompact = null;
@@ -898,41 +1261,26 @@ export function ReplayChatMessages(messages, init_prompt) {
 		}
 		collapsed.push(item);
 	}
-	const richFrom = Math.max(0, collapsed.length - REPLAY_RICH_LIMIT);
-	for (let i = 0; i < collapsed.length; ++i) {
-		const item = collapsed[i];
-		const rich = i >= richFrom;
-		if (item.kind === 'compact') {
-			// Orphan compact (no following assistant) — still show inside a bot box.
-			html += '<div class="msg_box"><div class="bot_msg">'
-				+ FormatBotHtml(CompactMarkerRaw(item.m.content || '', item.m.compact_count), rich)
-				+ '</div></div>';
-			continue;
-		}
-		if (item.kind === 'tool') {
-			const t = decodeBr(typeof item.m.content === 'string' ? item.m.content : JSON.stringify(item.m.content || ''));
-			html += '<div class="msg_box"><div class="bot_msg"><div class="dark_bg"><small>tool'+(item.m.name ? ' - '+EncodeHTML(item.m.name) : '')+'</small><pre class="tool_pre">'+EncodeHTML(t)+'</pre></div></div></div>';
-			continue;
-		}
-		if (item.kind === 'tool_calls') {
-			html += '<div class="msg_box"><div class="bot_msg"><div class="dark_bg"><small>tool_call</small><pre class="tool_pre">'+EncodeHTML(JSON.stringify(item.m.tool_calls, null, 2))+'</pre></div></div></div>';
-			continue;
-		}
-		const cls = item.as_bot ? 'bot_msg' : 'chat_msg';
-		let body = '';
-		if (item.as_bot) {
-			const raw = (item.compact
-				? CompactMarkerRaw(item.compact.content || '', item.compact.compact_count) + '\n\n'
-				: '') + item.text;
-			body = FormatBotHtml(raw, rich);
-		} else {
-			body = FormatMsgHtml(item.text, false, rich);
-		}
-		html += '<div class="msg_box"><div class="'+cls+'">'+body+FormatReplayAttachments(item.files)+'</div></div>';
-	}
+	return collapsed;
+}
+
+export function ReplayChatMessages(messages, init_prompt) {
+	const decodeBr = (t) => String(t || '').replaceAll('[AI_UI_BR]', '\n');
+	const prompt_txt = decodeBr(
+		(init_prompt != null && init_prompt !== '')
+			? init_prompt
+			: (messages && messages[0] && messages[0].role === 'system' ? (messages[0].content || '') : (state.prompt || ''))
+	);
+	state.prompt = prompt_txt;
+	$('#prompt_txta').val(prompt_txt);
+	const preview = (prompt_txt || '').trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0] || 'New session';
+	$('#init_prompt').html(EncodeHTML(preview));
+	$('#prompt_bar').removeClass('hidden');
+	replayPrepending = false;
+	replayCollapsed = BuildReplayCollapsed(messages);
+	replayPaintFrom = FindReplaySliceStart(replayCollapsed, REPLAY_CHAT_INITIAL);
 	$('#chat_log').children().not('#prompt_bar, #compact_run_status').remove();
-	$('#chat_log').append(html);
-	FinalizeBotBox($('#chat_log'));
+	InsertReplayHtml(HtmlForReplayItems(replayCollapsed.slice(replayPaintFrom)), false);
 	WireChatScrollUi();
 	ScrollChatToBottom(false, null, true);
 }
@@ -1003,14 +1351,18 @@ export function ToggleInputDialog(click_func, dialog_title, placeholder_txt='') 
 	}
 }
 
-function FinalizeBotBox(box, rich=true) {
+function FinalizeBotBox(box, rich=true, scrollOnImg=true) {
 	if (!box || !box.length) return;
 	box.find('div.bot_msg p').each(function () { if (IsEmptyParagraph(this)) this.remove(); });
 	GroupAgentActionDetails(box);
 	box.find("pre.code_box code").each(function () {
 		if ($(this).attr("data-highlighted") != "yes") hljs.highlightElement(this);
 	});
-	box.find('img').on('load', function () { ScrollChatToBottom(false); });
+	if (scrollOnImg) {
+		box.find('img').on('load', function () { ScrollChatToBottom(false); });
+	}
+	MountBotCopyButtons(box);
+	RefreshUserEditButton();
 }
 
 const AGENT_ACT_MIN = 4; // group when more than 3 sequential agent details
@@ -1029,6 +1381,7 @@ function IsSkippableBetweenDetails(node) {
 	const tag = node.tagName;
 	if (tag === 'BR' || tag === 'HR') return true;
 	if (tag === 'P' && IsEmptyParagraph(node)) return true;
+	if (node.classList && node.classList.contains('msg_copy_btn')) return true;
 	return false;
 }
 
@@ -1114,7 +1467,6 @@ function OversizedSendWarning(text) {
 	const tools = Number(state.ctx_tools) || 0;
 	const sum = Number(state.ctx_summary) || 0;
 	const overhead = sys + tools + sum;
-	const tail = Number(state.compact_tail_tokens) || 8000;
 	const needed = overhead + msgTok;
 	if (msgTok > limit || needed > limit) {
 		let msg = 'This message is about ' + FormatTokenCount(msgTok) + ' tokens.';
@@ -1126,13 +1478,6 @@ function OversizedSendWarning(text) {
 		msg += ' The Context Token Budget is ' + FormatTokenCount(limit)
 			+ '. Send anyway? The model may not see the full message.';
 		return msg;
-	}
-	if (msgTok > tail) {
-		return 'This message is about ' + FormatTokenCount(msgTok)
-			+ ' tokens, larger than Compact Recent Tail ('
-			+ FormatTokenCount(tail)
-			+ '). After compaction the last user message is always kept, '
-			+ 'but there may be little room for other context. Send anyway?';
 	}
 	return '';
 }
@@ -1395,6 +1740,16 @@ export function InitChat() {
 		$('#ctx_usage_tip').on('click', function(e) {
 			e.stopPropagation();
 		});
+		$('#chat_log').on('click', '.msg_copy_btn', function (e) {
+			e.preventDefault();
+			e.stopPropagation();
+			CopyBotMarkdown(this);
+		});
+		$('#chat_log').on('click', '.msg_edit_btn', function (e) {
+			e.preventDefault();
+			e.stopPropagation();
+			ToggleUserEdit(this);
+		});
 	});
 
 	ipcRenderer.on('context-usage', (event, payload) => {
@@ -1497,14 +1852,15 @@ export function InitChat() {
 	ipcRenderer.on('bot-msg', (event, payload) => {
 		ResetStreamPaintState();
 		let last_bmb = state.streaming_bmbl;
-		const bot_msg = FormatBotHtml(PrependPendingCompact(payload.msg), true);
+		const raw = PrependPendingCompact(payload.msg);
+		const bot_msg = FormatBotHtml(raw, true);
 		state.pendingCompact = null;
 		if (bot_msg !== '') {
 			if (last_bmb !== null && last_bmb.length)  {
-				last_bmb.html('<div class="bot_msg">'+bot_msg+'</div>');
+				last_bmb.html('<div class="bot_msg"'+CopyMdAttr(raw)+'>'+bot_msg+'</div>');
 				last_bmb.removeClass('hidden').show();
 			} else {
-				$('#chat_log').append('<div class="msg_box"><div class="bot_msg">'+bot_msg+'</div></div>');
+				$('#chat_log').append('<div class="msg_box"><div class="bot_msg"'+CopyMdAttr(raw)+'>'+bot_msg+'</div></div>');
 				last_bmb = $("#chat_log div.msg_box").last();
 			}
 			FinalizeBotBox(last_bmb);
@@ -1544,6 +1900,7 @@ export function InitChat() {
 		state.apply_compose = true;
 		state.streaming_bmbl = null;
 		state.streaming_bmpf = null;
+		ResetReplayWindow();
 		$('#chat_log').children().not('#prompt_bar, #compact_run_status').remove();
 		const preview = (state.prompt || '').trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0] || 'New session';
 		$('#init_prompt').html(EncodeHTML(preview));

@@ -7,7 +7,7 @@ const RECENT_MAX = 12;
 const GLOBAL_ONLY_APP = new Set([
 	'script_dir', 'python_bin', 'model_dir', 'sd_model', 'tts_model', 'sr_model', 'model_args',
 	'model_type', 'imodel_type', 'smodel_type', 'comp_dev', 'start_meth', 'avatar_img',
-	'hf_token', 'enable_devmode', 'enable_asasro', 'start_rec_keys', 'stop_rec_keys', 'ui_theme',
+	'hf_token', 'enable_devmode', 'enable_asasro', 'start_rec_keys', 'stop_rec_keys', 'ui_theme', 'show_side_panel', 'show_app_menu',
 	'text_backend', 'remote_base_url', 'remote_model', 'remote_api_key', 'remote_provider', 'remote_tool_format', 'remote_prompt_cache',
 	'workspace', 'last_session', 'last_project', 'recent_sessions', 'recent_projects'
 ]);

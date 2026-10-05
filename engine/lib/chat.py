@@ -1271,15 +1271,21 @@ def ApplySystemPrompt(text):
 	if getattr(E, "prompt_p", 0) == 2:
 		return
 	body = str(text or "")
+	msgs = list(getattr(E, "messages", None) or [])
+	old = ""
+	if msgs and str(msgs[0].get("role") or "").lower() == "system":
+		old = str(msgs[0].get("content") or "")
 	E.init_prompt = body
 	E.prompt = body
 	sys_msg = StampMsg({"role": "system", "content": body})
-	msgs = list(getattr(E, "messages", None) or [])
 	if msgs and str(msgs[0].get("role") or "").lower() == "system":
 		msgs[0] = sys_msg
 		E.messages = msgs
 	else:
 		E.messages = [sys_msg] + msgs
+	if old != body:
+		from lib import remote_tools
+		remote_tools.WarnIfAnthropicPrefixMayBreak("system prompt")
 
 
 def InitPrompt(have_prompt=False):

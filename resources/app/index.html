@@ -12,6 +12,9 @@
 				if (t === 'modern' || t === 'classic') {
 					document.getElementById('theme_css').href = './css/themes/' + t + '.css';
 				}
+				if (localStorage.getItem('aiui_side_panel') === '0') {
+					document.documentElement.classList.add('side-panel-hidden');
+				}
 			} catch (e) {}
 		})();
 	</script>
@@ -121,11 +124,10 @@
 							<div id="skills_toggles" class="pf_list"></div>
 						</div>
 					</div>
-					<p class="pf_hint">Files live in <code>~/.aiui</code> under your user home (and <code>&lt;project&gt;/.aiui</code> when a project is open via File &rarr; Open Project). Skills may be flat <code>skills/*.md</code> or Cursor-style <code>skills/&lt;name&gt;/SKILL.md</code>. Reload rescans disk and rebuilds the system prompt from the selected agent, enabled rules, and skill catalog.</p>
+					<p class="pf_hint">Files live in <code>~/.aiui</code> under your user home (and <code>&lt;project&gt;/.aiui</code> when a project is open via File &rarr; Open Project). Skills may be flat <code>skills/*.md</code> or Cursor-style <code>skills/&lt;name&gt;/SKILL.md</code>. Toggling a rule or skill updates the prompt editor only. APPLY in the prompt editor saves the changes.</p>
 				</div>
 				<div class="dialog_foot">
 					<button class="btn dialog_btn" type="button" onclick="TogglePromptFiles()">CLOSE</button>
-					<button class="btn dialog_btn" type="button" onclick="ReloadPromptFromFiles()">RELOAD FROM FILES</button>
 				</div>
 			</div>
 		</div>
@@ -254,15 +256,10 @@
 								<option value="aiui">AI UI Template</option>
 								<option value="aiui_notoolprompt">AI UI Template (no tool prompt)</option>
 							</select>
-							<span class="cfg_lbl">Enable Thinking <img class="help_icon" width="16" height="16" title="Local: controls whether thinking is enabled for models with chat templates that support it. Anthropic: uses adaptive thinking when enabled. OpenAI: False maps to reasoning_effort none. Auto omits when possible." /></span>
-							<select id="enable_thinking" class="cfg_drp">
-								<option value="auto" selected>Auto</option>
-								<option value="true">True</option>
-								<option value="false">False</option>
-							</select>
-							<span class="cfg_lbl">Reasoning Effort <img class="help_icon" width="16" height="16" title="Local: controls the level of reasoning effort for models with chat templates that support it. OpenAI: top-level reasoning_effort. Anthropic: output_config.effort. Auto omits the parameter." /></span>
+							<span class="cfg_lbl">Reasoning Effort <img class="help_icon" width="16" height="16" title="Auto: model default (Anthropic still uses adaptive thinking so thoughts show). Off: disable thinking - omit the field on Anthropic and openai.com; send none on OpenRouter / local serve. Low through Max set effort. Max is Anthropic-only; Chat Completions sends Extra High instead." /></span>
 							<select id="reasoning_effort" class="cfg_drp">
 								<option value="auto" selected>Auto</option>
+								<option value="off">Off</option>
 								<option value="low">Low</option>
 								<option value="medium">Medium</option>
 								<option value="high">High</option>
@@ -277,13 +274,11 @@
 							</select>
 							<span class="cfg_lbl">Max Message Memory <img class="help_icon" width="16" height="16" title="Used when Context Token Budget is 0 (compaction off). Number of recent messages kept in the model context. Higher values increase memory and latency." /></span>
 							<input type="number" id="max_msg_mem" class="cfg_num" min="2" max="10000" value="10">
-							<span class="cfg_lbl">Context Token Budget <img class="help_icon" width="16" height="16" title="When prompt tokens reach this budget (or Max Response Length no longer fits under it), the context is compacted into a summary (plus recent tail). Set to 0 to disable compaction and use Max Message Memory instead. Optional override: ~/.aiui/compact_prompt.txt" /></span>
+							<span class="cfg_lbl">Context Token Budget <img class="help_icon" width="16" height="16" title="When prompt tokens reach this budget (or Max Response Length no longer fits under it), older turns are compacted into a summary. After that the model sees the system prompt, the summary, and the latest user message. Set to 0 to disable compaction and use Max Message Memory instead. Optional override: ~/.aiui/compact_prompt.txt" /></span>
 							<input type="number" id="compact_at" class="cfg_num" min="0" max="2000000" step="1000" value="0">
-							<span class="cfg_lbl">Compact Recent Tail <img class="help_icon" width="16" height="16" title="After compaction, keep roughly this many tokens of recent conversation verbatim (in addition to the summary). The last user message is always kept in full, even if it is larger than this. Until the first compaction, the full chat is sent." /></span>
-							<input type="number" id="compact_tail_tokens" class="cfg_num" min="256" max="100000" step="256" value="8000">
-							<span class="cfg_lbl">Compact Summary Max <img class="help_icon" width="16" height="16" title="Max tokens for the summarization side-call when compaction runs. Independent of Max Response Length, which only applies to normal chat replies." /></span>
+							<span class="cfg_lbl">Context Summary Max <img class="help_icon" width="16" height="16" title="Max tokens for the summarization side-call when compaction runs. Independent of Max Response Length, which only applies to normal chat replies." /></span>
 							<input type="number" id="compact_summary_max" class="cfg_num" min="256" max="32000" step="256" value="8192">
-							<span class="cfg_lbl">Git Working Tree <img class="help_icon" width="16" height="16" title="When a project is a git repo, each user turn appends a short git status (uncommitted and untracked files) to the last user message so the agent can see what is already dirty. Not stored in the chat. Off when there is no project, the tree is clean, or this is False." /></span>
+							<span class="cfg_lbl">Git Working Tree <img class="help_icon" width="16" height="16" title="When a project is a git repo, each user turn stores a short git status (uncommitted and untracked files) on that message. The snapshot stays with the turn so later requests replay the same bytes. It is not shown in the chat. Off when there is no project, the tree is clean, or this is False." /></span>
 							<select id="git_status_context" class="cfg_drp">
 								<option value="0" selected>False</option>
 								<option value="1">True</option>
@@ -304,30 +299,29 @@
 							<input type="number" id="num_beams" class="cfg_num" min="1" max="100" step="1" value="1">
 							<span class="cfg_lbl">Beam Groups <img class="help_icon" width="16" height="16" title="The number of groups to divide beams into in order to ensure diversity among different groups of beams." /></span>
 							<input type="number" id="beam_groups" class="cfg_num" min="1" max="100" step="1" value="1">
-							<span class="cfg_lbl">Base Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable. The engine may briefly increase this value in some situations (e.g. using the REDO button)." /></span>
+							<span class="cfg_lbl">Base Temperature <img class="help_icon" width="16" height="16" title="A higher temperature value means the text will be more random and less predictable. The engine may briefly increase this value in some situations (e.g. using the REDO button). Not sent via Anthropic Messages or api.openai.com, whose current models only accept their default." /></span>
 							<input type="number" id="base_temp" class="cfg_num" min="0.01" max="1.0" step="0.01" value="0.8">
 							<span class="cfg_lbl">Top-K <img class="help_icon" width="16" height="16" title="Only samples from the most probable K vocabulary tokens. Set to 0 to disable Top-K sampling." /></span>
 							<input type="number" id="top_k" class="cfg_num" min="0" max="1000" value="50">
-							<span class="cfg_lbl">Top-p <img class="help_icon" width="16" height="16" title="Only the smallest set of most probable tokens with probabilities that add up to this value or higher are kept for generation." /></span>
+							<span class="cfg_lbl">Top-p <img class="help_icon" width="16" height="16" title="Only the smallest set of most probable tokens with probabilities that add up to this value or higher are kept for generation. Not sent via Anthropic Messages or api.openai.com, whose current models only accept their default." /></span>
 							<input type="number" id="top_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
 							<span class="cfg_lbl">Typical-p <img class="help_icon" width="16" height="16" title="Only the smallest set of the most locally typical tokens with probabilities that add up to this value or higher are kept for generation." /></span>
 							<input type="number" id="typical_p" class="cfg_num" min="0.01" max="1.0" step="0.01" value="1.0">
 							<span class="cfg_lbl">Repetition Penalty <img class="help_icon" width="16" height="16" title="Higher values should reduce repetitions but can be buggy. Set to 1.0 for no repetition penalty." /></span>
 							<input type="number" id="rep_penalty" class="cfg_num" min="1.0" max="2.0" step="0.01" value="1.0">
-							<span class="cfg_lbl">Frequency Penalty <img class="help_icon" width="16" height="16" title="OpenAI-style frequency penalty (-2.0 to 2.0). Positive values discourage tokens in proportion to how often they already appeared. Applied on remote OpenAI-compatible APIs (HF router, OpenRouter, etc.). Not used for local HF generate (use Repetition Penalty). Default 0." /></span>
+							<span class="cfg_lbl">Frequency Penalty <img class="help_icon" width="16" height="16" title="OpenAI-style frequency penalty (-2.0 to 2.0). Positive values discourage tokens in proportion to how often they already appeared. Applied on remote OpenAI-compatible APIs (HF router, OpenRouter, etc.), but not api.openai.com. Not used for local HF generate (use Repetition Penalty). Default 0." /></span>
 							<input type="number" id="frequency_penalty" class="cfg_num" min="-2.0" max="2.0" step="0.01" value="0">
-							<span class="cfg_lbl">Presence Penalty <img class="help_icon" width="16" height="16" title="OpenAI-style presence penalty (-2.0 to 2.0). Positive values discourage tokens that have already appeared at least once. Applied on remote OpenAI-compatible APIs. Not used for local HF generate (use Repetition Penalty). Default 0." /></span>
+							<span class="cfg_lbl">Presence Penalty <img class="help_icon" width="16" height="16" title="OpenAI-style presence penalty (-2.0 to 2.0). Positive values discourage tokens that have already appeared at least once. Applied on remote OpenAI-compatible APIs, but not api.openai.com. Not used for local HF generate (use Repetition Penalty). Default 0." /></span>
 							<input type="number" id="presence_penalty" class="cfg_num" min="-2.0" max="2.0" step="0.01" value="0">
 							<br><br>
 						</div>
 						<div id="tool_config">
-							<span class="cfg_lbl">Tool Packs <img class="help_icon" width="16" height="16" title="Enable Native packs (Math, Web, Coding, Image) and MCP servers from ~/.aiui/mcp.json. Click a pack name for settings, Auto-allow, and per-tool toggles." /></span>
+							<span class="cfg_lbl">Tool Packs <img class="help_icon" width="16" height="16" title="Native packs ship with AI UI (Utils, Math, Web, Coding, Image). MCP servers are installed via ~/.aiui/mcp.json. Click a pack name for settings, auto-allow, and per-tool toggles." /></span>
 							<div id="tool_packs_list"></div>
 							<div class="tool_pack_actions_bar">
 								<button type="button" id="mcp_edit_file_btn" class="btn cfg_btn">SHOW MCP.JSON</button>
 								<button type="button" id="mcp_refresh_btn" class="btn cfg_btn">REFRESH PACKS</button>
 							</div>
-							<p id="tools_info"><small>Native packs ship with AI UI. MCP servers are installed via <code>~/.aiui/mcp.json</code></small></p>
 						</div>
 						<button id="apply_btn" class="btn cfg_btn" onclick="ApplyConfig()" disabled>APPLY</button>
 						<button id="adv_btn" class="btn cfg_btn" onclick="ToggleConfig()">AI SETTINGS</button>
@@ -676,7 +670,7 @@
 								<option value="openai" selected>OpenAI</option>
 								<option value="anthropic">Anthropic</option>
 							</select>
-							<span class="cfg_lbl">Prompt Caching <img class="help_icon" width="16" height="16" title="When on, send cache_control type ephemeral so Anthropic (Messages API) and OpenRouter (Claude and other explicit-cache models) can reuse stable prompt prefixes across turns. Default on." /></span>
+							<span class="cfg_lbl">Prompt Caching <img class="help_icon" width="16" height="16" title="When on, Anthropic and OpenRouter get top-level cache_control ephemeral so the cache breakpoint follows the conversation. openai.com and OpenRouter also get a stable prompt_cache_key derived from the system prompt. Default on." /></span>
 							<select id="remote_prompt_cache" class="cfg_drp">
 								<option value="1" selected>True</option>
 								<option value="0">False</option>
@@ -856,7 +850,7 @@ http://localhost:11434/v1</code></pre>
 					<p>File attachments: The attach dialog <b>Vision</b> control selects the local multimodal family and is disabled when Text Backend is Remote. Remote sends images (up to 10 MiB) and videos (up to 100 MiB) as <code>image_url</code> / <code>video_url</code> (http or base64) plus text-file contents; audio is skipped on remote.</p>
 
 					<h3 class="help_title">Context Compaction</h3>
-					<p>In AI Settings, <b>Context Token Budget</b> enables context summarization (aka context compaction) when the conversation length approaches that limit.</p>
+					<p>In AI Settings, <b>Context Token Budget</b> enables context summarization (aka context compaction) when the conversation length approaches that limit. After a compaction the model sees the system prompt, the summary, and the latest user message; older turns stay in the saved chat for tools and the UI.</p>
 					
 					<p>Set <b>Context Token Budget</b> to <code>0</code> to use classic <b>Max Message Memory</b> pruning (old information is lost, prefer summarization for long-range tasks).</p>
 					

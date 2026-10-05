@@ -1,4 +1,8 @@
-"""Ephemeral git working-tree snapshot for the model wire (not stored in chat)."""
+"""Per-user-message git working-tree snapshot for the model wire.
+
+Stored on the message as `_git_status` (chat.json) and merged into `content`
+only when building the model request. The UI paints `content` and never sees it.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,8 @@ import os
 import subprocess
 
 E = None
+
+GIT_STATUS_KEY = "_git_status"
 
 _SKIP_DIR_NAMES = {".git", "node_modules", "vendor", ".venv", "__pycache__"}
 _MAX_STATUS_LINES = 60
@@ -17,54 +23,25 @@ def bind(engine_module):
 	E = engine_module
 
 
-def ClearGitContext():
-	if E is None:
-		return
-	E._git_context_block = None
-	E._git_context_frozen = False
-
-
-def EnsureGitContext(*, freeze=None):
-	"""Keep one snapshot per user turn; refresh when idle / counting outside a turn.
-
-	freeze=True  — capture now and reuse until freeze=False (bot turn).
-	freeze=False — allow the next Ensure to recapture (turn end).
-	omit freeze  — capture unless a turn snapshot is frozen.
-	"""
-	if E is None:
-		return
-	if freeze is True:
-		E._git_context_frozen = True
-		CaptureGitContext()
-		return
-	if freeze is False:
-		E._git_context_frozen = False
-		return
-	if getattr(E, "_git_context_frozen", False):
-		return
-	CaptureGitContext()
-
-
 def CaptureGitContext():
-	"""Refresh porcelain status. No-op when disabled / not a repo / clean tree."""
+	"""Return porcelain snapshot text, or None when disabled / not a repo / clean."""
 	if E is None:
-		return
-	E._git_context_block = None
+		return None
 	if not int(getattr(E, "git_status_context", 0) or 0):
-		return
+		return None
 	root = str(getattr(E, "workspace_dir", "") or "").strip()
 	if not root or not os.path.isdir(root):
-		return
+		return None
 	if not _git_is_work_tree(root):
-		return
+		return None
 	branch = _git_text(root, ["rev-parse", "--abbrev-ref", "HEAD"]) or "HEAD"
 	raw = _git_text(root, ["status", "--porcelain", "--untracked-files=normal"])
 	if raw is None:
-		return
+		return None
 	lines, omitted = _filter_status_lines(raw.splitlines())
 	if not lines and not omitted:
-		return
-	out = ["# Working tree (git status, this turn only)", f"branch: {branch}"]
+		return None
+	out = ["# Working tree (git status)", f"branch: {branch}"]
 	if not lines and omitted:
 		out.append(f"(no listed paths; omitted {omitted} under {', '.join(sorted(_SKIP_DIR_NAMES))})")
 	else:
@@ -77,7 +54,23 @@ def CaptureGitContext():
 			note.append(f"{omitted} omitted ({', '.join(sorted(_SKIP_DIR_NAMES))})")
 		if note:
 			out.append("… " + ", ".join(note))
-	E._git_context_block = "\n".join(out)
+	return "\n".join(out)
+
+
+def StampUserGitStatus(msg):
+	"""Snapshot git status onto a user message once (in-place)."""
+	if E is None or not isinstance(msg, dict):
+		return msg
+	if getattr(E, "_compact_bypass", False):
+		return msg
+	if not int(getattr(E, "git_status_context", 0) or 0):
+		return msg
+	if msg.get(GIT_STATUS_KEY):
+		return msg
+	block = CaptureGitContext()
+	if block:
+		msg[GIT_STATUS_KEY] = block
+	return msg
 
 
 def _IsUserMsg(msg):
@@ -100,38 +93,34 @@ def _AppendGitBlock(content, block):
 
 
 def AttachGitContext(messages):
-	"""Copy-on-write: append the snapshot to the last user message on the wire.
+	"""Copy-on-write: append each stored `_git_status` to that user message.
 
-	Keeps the system prompt (and earlier history) stable for prefix caching.
-	No user message yet (empty chat / usage ring) → skip; do not put it on system.
+	Replay is per-message and byte-stable so later turns do not edit earlier
+	prefixes. Setting off, summarizer side-channel, and compact handoff
+	(`_aiui_summary`) skip attach. No user field → leave content unchanged.
 	"""
 	if E is None:
 		return messages
-	# Summarizer side-channel uses a synthetic transcript; do not inject there.
 	if getattr(E, "_compact_bypass", False):
 		return messages
-	EnsureGitContext()
-	block = getattr(E, "_git_context_block", None)
-	if not block:
+	if not int(getattr(E, "git_status_context", 0) or 0):
 		return messages
 	raw = list(messages or [])
-	idx = None
-	for i in range(len(raw) - 1, -1, -1):
-		m = raw[i]
-		if isinstance(m, dict) and _IsUserMsg(m):
-			idx = i
-			break
-	if idx is None:
-		return messages
 	out = []
-	for i, m in enumerate(raw):
-		if i != idx or not isinstance(m, dict):
+	changed = False
+	for m in raw:
+		if not isinstance(m, dict) or not _IsUserMsg(m) or m.get("_aiui_summary"):
+			out.append(m)
+			continue
+		block = m.get(GIT_STATUS_KEY)
+		if not block:
 			out.append(m)
 			continue
 		msg = dict(m)
-		msg["content"] = _AppendGitBlock(msg.get("content"), block)
+		msg["content"] = _AppendGitBlock(msg.get("content"), str(block))
 		out.append(msg)
-	return out
+		changed = True
+	return out if changed else messages
 
 
 def _git_is_work_tree(root):

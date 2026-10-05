@@ -7,6 +7,7 @@ shared tool loop. Rebuild maps from the current transcript each request.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 
@@ -75,69 +76,94 @@ def ApplyOpenAIToolFields(payload, enable_tooluse=None):
 	tools = ToolsForOpenAI() if enable_tooluse else []
 	if enable_tooluse and tools:
 		payload["tools"] = tools
-		payload["tool_choice"] = "auto"
+		if getattr(E, "_compact_summarize", False):
+			payload["tool_choice"] = "none"
+		else:
+			payload["tool_choice"] = "auto"
 	else:
 		payload.pop("tools", None)
 		payload.pop("tool_choice", None)
 	return payload
 
 
+def IsOfficialOpenAI():
+	"""True when Base URL points at openai.com (empty = HF router, not official)."""
+	host = str(getattr(E, "remote_base_url", "") or "").strip().lower()
+	return "openai.com" in host or "api.openai" in host
+
+
 def ApplyOpenAIThinkingFields(payload):
-	"""Map Enable Thinking / Reasoning Effort onto OpenAI-compat chat.completions.
+	"""Map Reasoning Effort onto OpenAI-compat chat.completions.
 
 	- chat_template_kwargs only for custom/transformers serve (openai.com and
 	  OpenRouter reject unknown body fields).
-	- reasoning_effort for OpenRouter / serve; official OpenAI omits it when
-	  thinking is off and clamps xhigh/max to high.
+	- Off omits the field on openai.com (older models 400 on unknown keys) and
+	  sends `none` on OpenRouter / serve. Max becomes xhigh on this path;
+	  openai.com further clamps xhigh to high.
 	"""
 	from lib import chat_template
 
 	ct_kw = chat_template.ThinkingKwargs(E)
-	et = str(getattr(E, "enable_thinking", "auto") or "auto").strip().lower()
-	re = str(getattr(E, "reasoning_effort", "auto") or "auto").strip().lower()
-	if re == "none":
-		re = "auto"
-	elif re == "minimal":
-		re = "low"
+	re = chat_template.NormReasoningEffort(getattr(E, "reasoning_effort", "auto"))
 
 	host = str(getattr(E, "remote_base_url", "") or "").strip().lower()
-	official_openai = "openai.com" in host or "api.openai" in host
+	official_openai = IsOfficialOpenAI()
 	serve_kw = bool(host) and not official_openai and "openrouter.ai" not in host
 	if serve_kw and isinstance(ct_kw, dict) and ct_kw:
 		payload["chat_template_kwargs"] = ct_kw
 	else:
 		payload.pop("chat_template_kwargs", None)
 
-	if et in ("false", "0", "no", "off"):
-		if official_openai:
-			payload.pop("reasoning_effort", None)
-		else:
-			payload["reasoning_effort"] = "none"
-	elif re in ("low", "medium", "high", "xhigh", "max"):
-		if official_openai and re in ("xhigh", "max"):
-			re = "high"
-		payload["reasoning_effort"] = re
+	wire = None
+	if re == "off":
+		wire = None if official_openai else "none"
+	elif re in chat_template.EFFORT_LEVELS:
+		wire = "xhigh" if re == "max" else re
+		if official_openai and wire == "xhigh":
+			wire = "high"
+	if wire:
+		payload["reasoning_effort"] = wire
 	else:
 		payload.pop("reasoning_effort", None)
 	return payload
 
 
 def ParseToolResponseInner(payload):
-	"""XML <tool_response> body → (name, content, id)."""
+	"""XML <tool_response> body → (name, content, id, is_error)."""
 	name = "unknown"
 	body = payload
 	resp_id = ""
+	is_error = False
+	parsed = None
 	try:
 		data = json.loads(payload) if payload else {}
 		if isinstance(data, dict):
+			parsed = data
 			name = str(data.get("name") or name)
 			resp_id = str(data.get("id") or "")
 			body = data.get("content", payload)
 			if not isinstance(body, str):
 				body = json.dumps(body, ensure_ascii=False)
+			if "error" in data:
+				is_error = bool(data.get("error"))
 	except Exception:
 		pass
-	return name, body, resp_id
+	# Legacy transcripts have no `error` key; sniff ERROR: only then.
+	if parsed is None or "error" not in parsed:
+		if isinstance(body, str) and body.startswith("ERROR:"):
+			is_error = True
+	return name, body, resp_id, is_error
+
+
+def _AnthropicToolResult(tid, body, is_error=False):
+	block = {
+		"type": "tool_result",
+		"tool_use_id": tid,
+		"content": body if isinstance(body, str) else str(body),
+	}
+	if is_error:
+		block["is_error"] = True
+	return block
 
 
 def TakePendingToolId(pending_ids, resp_id=None, fallback=""):
@@ -156,6 +182,40 @@ def TakePendingToolId(pending_ids, resp_id=None, fallback=""):
 	if pending_ids:
 		return pending_ids.pop(0)
 	return fallback
+
+
+STOPPED_BEFORE_TOOL = "Stopped before this tool ran."
+
+
+def _AppendStoppedToolResults(out, pending_ids, anthropic):
+	"""Give every unmatched tool call a result so the next request is valid.
+
+	Anthropic and OpenAI both reject a tool call with no result. A turn stopped
+	between calls leaves that hole; a call that already finished stays as stored.
+	"""
+	while pending_ids:
+		tid = pending_ids.pop(0)
+		if not tid:
+			continue
+		if anthropic:
+			out.append({
+				"role": "user",
+				"content": [_AnthropicToolResult(tid, STOPPED_BEFORE_TOOL, True)],
+			})
+		else:
+			out.append({
+				"role": "tool",
+				"tool_call_id": tid,
+				"content": STOPPED_BEFORE_TOOL,
+			})
+
+
+def _ClosePendingBeforeUser(out, pending_ids, role, anthropic):
+	"""Flush unmatched calls before a real user turn. Leave system/tool rows alone."""
+	if str(role or "") in ("system", "tool"):
+		return
+	if pending_ids:
+		_AppendStoppedToolResults(out, pending_ids, anthropic)
 
 
 _REASONING_TEXT_FIELDS = {
@@ -487,6 +547,7 @@ def MapMessagesOpenAI(messages, replay_reasoning=False):
 		role = str(m.get("role") or "user")
 		content = m.get("content")
 		if role != "assistant" or not isinstance(content, str):
+			_ClosePendingBeforeUser(out, pending_ids, role, False)
 			item = {k: v for k, v in dict(m).items() if not str(k).startswith("_")}
 			out.append(item)
 			continue
@@ -587,7 +648,7 @@ def MapMessagesOpenAI(messages, replay_reasoning=False):
 				# Preface + tool_calls share one assistant message when possible.
 				FlushCalls()
 				FlushText()
-				_name, body, resp_id = ParseToolResponseInner(payload)
+				_name, body, resp_id, _is_err = ParseToolResponseInner(payload)
 				tid = TakePendingToolId(
 					pending_ids, resp_id, fallback=f"call_{msg_i}_orphan_{call_i}",
 				)
@@ -602,6 +663,7 @@ def MapMessagesOpenAI(messages, replay_reasoning=False):
 			prior_text = ""
 		FlushText()
 
+	_AppendStoppedToolResults(out, pending_ids, False)
 	return out
 
 
@@ -752,7 +814,10 @@ def ApplyAnthropicToolFields(payload, enable_tooluse=None):
 	tools = ToolsForAnthropic() if enable_tooluse else []
 	if enable_tooluse and tools:
 		payload["tools"] = tools
-		payload["tool_choice"] = {"type": "auto"}
+		if getattr(E, "_compact_summarize", False):
+			payload["tool_choice"] = {"type": "none"}
+		else:
+			payload["tool_choice"] = {"type": "auto"}
 	else:
 		# Anthropic rejects tool_choice when tools is absent/empty.
 		payload.pop("tools", None)
@@ -761,20 +826,25 @@ def ApplyAnthropicToolFields(payload, enable_tooluse=None):
 
 
 def ApplyAnthropicThinkingFields(payload):
-	"""Map Enable Thinking / Reasoning Effort → Anthropic thinking + effort."""
-	et = str(getattr(E, "enable_thinking", "auto") or "auto").strip().lower()
-	if et in ("false", "0", "no", "off"):
-		payload["thinking"] = {"type": "disabled"}
-		payload.pop("effort", None)
+	"""Map Reasoning Effort → Anthropic thinking + output_config.effort.
+
+	Off omits `thinking` (never `disabled` — Fable/Mythos/Opus reject it).
+	Auto and Low…Max send adaptive thinking so thoughts show in AI UI.
+	Max is kept as `max` on this path.
+	"""
+	from lib import chat_template
+
+	effort = chat_template.NormReasoningEffort(getattr(E, "reasoning_effort", "auto"))
+	if effort == "off":
+		payload.pop("thinking", None)
+		oc = payload.get("output_config")
+		if isinstance(oc, dict):
+			oc.pop("effort", None)
+			if not oc:
+				payload.pop("output_config", None)
 		return payload
-	# true and auto → adaptive + summarized so thoughts show in AI UI
 	payload["thinking"] = {"type": "adaptive", "display": "summarized"}
-	effort = str(getattr(E, "reasoning_effort", "auto") or "auto").strip().lower()
-	if effort == "none":
-		effort = "auto"
-	elif effort == "minimal":
-		effort = "low"
-	if effort in ("low", "medium", "high", "xhigh", "max"):
+	if effort in chat_template.EFFORT_LEVELS:
 		oc = dict(payload.get("output_config") or {})
 		oc["effort"] = effort
 		payload["output_config"] = oc
@@ -797,7 +867,12 @@ def _PromptCacheOn():
 
 
 def ApplyAnthropicCacheFields(payload):
-	"""Top-level automatic ephemeral cache when remote_prompt_cache is on."""
+	"""Top-level automatic ephemeral cache when remote_prompt_cache is on.
+
+	The API parks the breakpoint on the last cacheable block and moves it
+	forward as the conversation grows. A marker on the system prompt alone
+	would leave every later message billed as fresh input.
+	"""
 	if _PromptCacheOn():
 		payload["cache_control"] = {"type": "ephemeral"}
 	else:
@@ -805,21 +880,48 @@ def ApplyAnthropicCacheFields(payload):
 	return payload
 
 
-def ApplyOpenAICacheFields(payload):
-	"""OpenRouter automatic cache breakpoint (Anthropic-style top-level cache_control).
+def _LeadingSystemText(messages):
+	"""Text of the leading system message(s), before the first non-system turn."""
+	parts = []
+	for m in messages or []:
+		if not isinstance(m, dict) or str(m.get("role") or "") != "system":
+			break
+		content = m.get("content")
+		if isinstance(content, str):
+			if content:
+				parts.append(content)
+		elif isinstance(content, list):
+			for p in content:
+				if isinstance(p, dict) and p.get("text"):
+					parts.append(str(p.get("text")))
+	return "\n\n".join(parts)
 
-	openai.com and transformers serve reject unknown body fields. Grok/OpenAI
-	on OpenRouter ignore the field; Claude-via-OpenRouter uses it to advance
-	the cache as the conversation grows.
+
+def PromptCacheKey(system):
+	"""Stable routing key so a growing prefix stays on one OpenAI cache."""
+	return hashlib.sha256(str(system or "").encode("utf-8")).hexdigest()
+
+
+def ApplyOpenAICacheFields(payload):
+	"""Prompt-cache hints for OpenAI-compat hosts.
+
+	openai.com already places an implicit breakpoint on the prefix; a stable
+	prompt_cache_key keeps that prefix on one cache as the conversation grows.
+	OpenRouter gets the same key plus Anthropic-style top-level cache_control
+	so Claude-via-OpenRouter advances the breakpoint. transformers serve and
+	the HF router get neither (unknown body fields 400).
 	"""
 	host = str(getattr(E, "remote_base_url", "") or "").strip().lower()
-	if "openrouter.ai" not in host:
-		payload.pop("cache_control", None)
+	router = "openrouter.ai" in host
+	official = IsOfficialOpenAI()
+	payload.pop("cache_control", None)
+	payload.pop("prompt_cache_key", None)
+	if not _PromptCacheOn():
 		return payload
-	if _PromptCacheOn():
+	if official or router:
+		payload["prompt_cache_key"] = PromptCacheKey(_LeadingSystemText(payload.get("messages")))
+	if router:
 		payload["cache_control"] = {"type": "ephemeral"}
-	else:
-		payload.pop("cache_control", None)
 	return payload
 
 
@@ -940,10 +1042,8 @@ def _WholeMessageThinkInner(text):
 def ThinkingLeadBlocks(sidecar):
 	"""`thinking` / `redacted_thinking` blocks from an `_anthropic_content` sidecar.
 
-	Text and tool_use blocks are deliberately ignored: they are rebuilt from the
-	XML transcript (tool_call JSON keeps the server `id`), so replaying them here
-	would send every assistant turn twice. Encrypted thinking signatures are the
-	only part of a reply that cannot be reconstructed.
+	Used for legacy thinking-only sidecars. Full content arrays are sent as-is
+	by MapMessagesAnthropic and skip this filter.
 	"""
 	out = []
 	for b in sidecar if isinstance(sidecar, list) else []:
@@ -952,12 +1052,55 @@ def ThinkingLeadBlocks(sidecar):
 	return out
 
 
+def SidecarIsFullContent(sidecar):
+	"""True when the sidecar is more than thinking-only (text, tool_use, unknown)."""
+	if not isinstance(sidecar, list) or not sidecar:
+		return False
+	for b in sidecar:
+		if not isinstance(b, dict):
+			return True
+		if b.get("type") not in ("thinking", "redacted_thinking"):
+			return True
+	return False
+
+
+def SessionHasNonSystemMessages():
+	from lib import context_compact
+
+	for m in getattr(E, "messages", None) or []:
+		if not isinstance(m, dict):
+			continue
+		if context_compact.IsCompactNotice(m):
+			continue
+		if str(m.get("role") or "").lower() != "system":
+			return True
+	return False
+
+
+def WarnIfAnthropicPrefixMayBreak(what="system prompt or tools"):
+	"""Console warn when a mid-session prefix change can drop Anthropic thinking."""
+	if str(getattr(E, "text_backend", "local") or "local").lower() != "remote":
+		return
+	if RemoteToolFormat() != "anthropic":
+		return
+	if not SessionHasNonSystemMessages():
+		return
+	from lib import ipc
+
+	label = str(what or "system prompt or tools")
+	ipc.LogErr(
+		f"WARN: {label} changed mid-session. "
+		"Earlier Anthropic thinking may be dropped, and the prompt cache may restart."
+	)
+
+
 def MapMessagesAnthropic(messages):
 	"""Rebuild Anthropic wire messages from AI UI transcript.
 
-	Returns (system, wire_messages). Thinking blocks come from the
-	`_anthropic_content` sidecar and lead the assistant turn they belong to.
-	Preserves server tool_use ids from tool-call JSON `"id"` when remapping XML.
+	Returns (system, wire_messages). A full `_anthropic_content` sidecar is
+	sent as-is. Legacy thinking-only sidecars prepend thinking and rebuild
+	text / tool_use from XML. Preserves server tool_use ids from sidecar
+	blocks or from tool-call JSON `"id"`.
 	"""
 	from lib import tool_calls as tc_mod
 
@@ -984,6 +1127,7 @@ def MapMessagesAnthropic(messages):
 			continue
 
 		if role != "assistant":
+			_ClosePendingBeforeUser(out, pending_ids, role, True)
 			mapped = ContentToAnthropic(content)
 			# Skip attachments that mapped to nothing (video-only, unsupported parts).
 			if mapped == "":
@@ -991,7 +1135,28 @@ def MapMessagesAnthropic(messages):
 			out.append({"role": "user", "content": mapped})
 			continue
 
-		lead = ThinkingLeadBlocks(m.get("_anthropic_content"))
+		sidecar = m.get("_anthropic_content")
+		if SidecarIsFullContent(sidecar):
+			blocks = [dict(b) if isinstance(b, dict) else b for b in sidecar]
+			out.append({"role": "assistant", "content": blocks})
+			for b in blocks:
+				if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id"):
+					pending_ids.append(b["id"])
+			if isinstance(content, str) and "<tool_response>" in content:
+				for kind, payload in tc_mod.SplitToolSegments(content):
+					if kind != "tool_response":
+						continue
+					_name, body, resp_id, is_err = ParseToolResponseInner(payload)
+					tid = TakePendingToolId(
+						pending_ids, resp_id, fallback=f"toolu_{msg_i}_orphan_0",
+					)
+					out.append({
+						"role": "user",
+						"content": [_AnthropicToolResult(tid, body, is_err)],
+					})
+			continue
+
+		lead = ThinkingLeadBlocks(sidecar)
 		if isinstance(content, str):
 			content = _StripLeadingThink(content)
 
@@ -1076,20 +1241,18 @@ def MapMessagesAnthropic(messages):
 			elif kind == "tool_response":
 				FlushCalls()
 				FlushText()
-				_name, body, resp_id = ParseToolResponseInner(payload)
+				_name, body, resp_id, is_err = ParseToolResponseInner(payload)
 				tid = TakePendingToolId(
 					pending_ids, resp_id, fallback=f"toolu_{msg_i}_orphan_{call_i}",
 				)
 				out.append({
 					"role": "user",
-					"content": [{
-						"type": "tool_result",
-						"tool_use_id": tid,
-						"content": body if isinstance(body, str) else str(body),
-					}],
+					"content": [_AnthropicToolResult(tid, body, is_err)],
 				})
 		FlushCalls()
 		FlushText()
+
+	_AppendStoppedToolResults(out, pending_ids, True)
 
 	# Anthropic requires alternating user/assistant; merge consecutive same-role.
 	merged = []
@@ -1178,9 +1341,8 @@ def ContentBlocksToWireList(content_blocks):
 				"type": "thinking",
 				"thinking": getattr(b, "thinking", "") or "",
 			}
-			sig = getattr(b, "signature", None)
-			if sig:
-				item["signature"] = sig
+			if hasattr(b, "signature"):
+				item["signature"] = getattr(b, "signature", None) or ""
 			out.append(item)
 		elif btype == "redacted_thinking":
 			item = {"type": "redacted_thinking"}

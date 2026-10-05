@@ -21,7 +21,7 @@ import {
 	ChatPage, TextPage, ImagePage, SpeechPage, ConfigPage, ConsolePage, HelpPage, AboutPage,
 	ApplySettings, ApplyConfig, ToggleConfig, ShowMainConfig, ShowOtherConfig, ShowRemoteConfig,
 	ShowInstallHelp, ShowSetupHelp, ToggleInputDialog, ToggleEditPrompt, TogglePromptFiles, ApplyNewPrompt,
-	ReloadPromptFromFiles, OnAgentChanged,
+	OnAgentChanged,
 	ChangeTalkMode, ChangeAvatar, OpenSample, OpenFile, OpenFolder, OpenFileFolder,
 	SetAppVersion, RestartScript, StartScript, QuitApp,
 	InitUi, WireUiEvents, RenderToolPacks, ToggleWorkspaceStatusTip
@@ -40,7 +40,7 @@ Object.assign(window, {
 	SendMsg, RedoLast, ContChat, ToggleMsgBox, ToggleDetails,
 	ToggleRecordBox, ToggleAttachBox, AttachFiles, AttachLink, ClearAttachments,
 	RemoveFile, FileDragDrop, FileDragOver, ToggleCtxUsageTip, CompactNow, ScrollChatBottom,
-	ToggleInputDialog, ToggleEditPrompt, TogglePromptFiles, ApplyNewPrompt, ReloadPromptFromFiles, OnAgentChanged,
+	ToggleInputDialog, ToggleEditPrompt, TogglePromptFiles, ApplyNewPrompt, OnAgentChanged,
 	ChangeTalkMode, ChangeAvatar, StopPlayback, TogglePlayback,
 	GenText, ToggleGenBox, CopyGenTxt, ReadGenTxt,
 	GenSpeech, ToggleTTSBox, CloneVoice, OpenWavDir, OpenTTSDir, OpenAIADir, SaveVoice,

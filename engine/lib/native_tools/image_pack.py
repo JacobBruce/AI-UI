@@ -9,6 +9,7 @@ PACK_KIND = "native"
 TOOLS = [
 	{
 		"name": "gen_image",
+		"annotations": {"readOnlyHint": False},
 		"description": (
 			"Generates an image from a text prompt using the configured local image model. "
 			"Returns the saved image file as an absolute path on success. To show it in chat, "
@@ -59,6 +60,7 @@ TOOLS = [
 	},
 	{
 		"name": "gen_image_ipa",
+		"annotations": {"readOnlyHint": False},
 		"description": (
 			"Generates an image guided by a reference image via IP-Adapter when guide_image "
 			"is set; otherwise behaves like gen_image. Use is_person=true for face-oriented adapters. "

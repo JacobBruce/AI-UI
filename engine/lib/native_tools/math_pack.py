@@ -9,6 +9,7 @@ _aeval = None
 TOOLS = [
 	{
 		"name": "reset_aeval",
+		"annotations": {"readOnlyHint": False},
 		"description": "Resets the asteval interpreter, clearing the symbol table.",
 		"inputSchema": {
 			"type": "object",
@@ -18,6 +19,7 @@ TOOLS = [
 	},
 	{
 		"name": "get_value",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Returns the value of a variable in the asteval symbol table as a string. "
 			"Returns an error string if the symbol name does not exist."
@@ -36,6 +38,7 @@ TOOLS = [
 	},
 	{
 		"name": "aeval",
+		"annotations": {"readOnlyHint": False},
 		"description": (
 			"Safely evaluates Python-like code using asteval. Useful for solving math-related problems. "
 			"Many functions from the math and numpy modules are available. "

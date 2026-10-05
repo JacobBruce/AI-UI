@@ -6,7 +6,7 @@ const engine = require('./engine.js');
 const sessions = require('./sessions.js');
 const mcpStore = require('./mcp_store.js');
 const { CreateSessionOps } = require('./session_ops.js');
-const { BuildAppMenu } = require('./menu.js');
+const { BuildAppMenu, ApplyAppMenuBar } = require('./menu.js');
 const { CreateDownloads } = require('./ipc/downloads.js');
 const { CreateHandlers } = require('./ipc/handlers.js');
 
@@ -93,7 +93,7 @@ function SaveConfig() {
 }
 
 function RebuildMenu() {
-	BuildAppMenu({ sessionOps, getWin: GetWin, core, sessionLocked: sessionMenuLocked });
+	BuildAppMenu({ sessionOps, getWin: GetWin, core, sessionLocked: sessionMenuLocked, saveGlobalConfig: SaveConfig });
 }
 
 function SetSessionMenuLock(locked) {
@@ -213,9 +213,18 @@ function CreateWindow() {
 		}
 	});
 
-	win.setMenuBarVisibility(true);
 	RebuildMenu();
+	ApplyAppMenuBar(win, core);
 	win.loadFile('./index.html');
+
+	function RestoreMenuBar() {
+		ApplyAppMenuBar(win, core);
+	}
+	// Linux: View → Toggle Full Screen dismisses the GTK menu first, so Electron
+	// snapshots the bar as hidden and never restores it on exit (F11-only is fine).
+	for (const ev of ['enter-full-screen', 'leave-full-screen', 'enter-html-full-screen', 'leave-html-full-screen']) {
+		win.on(ev, () => { setTimeout(RestoreMenuBar, 0); });
+	}
 
 	win.on('close', (e) => {
 		if (winState == 0) {
@@ -263,11 +272,27 @@ function CreateWindow() {
 			itemCount++;
 		}
 
-		if (itemCount > 0) menu.popup();
+		if (itemCount > 0) menu.append(new MenuItem({ type: 'separator' }));
+		menu.append(new MenuItem({
+			label: 'Reset View',
+			click: () => {
+				if (core && core.APP_CONFIG) {
+					core.APP_CONFIG.show_app_menu = 1;
+					core.APP_CONFIG.show_side_panel = 1;
+				}
+				SaveConfig();
+				ApplyAppMenuBar(win, core);
+				RebuildMenu();
+				if (win && !win.isDestroyed()) win.webContents.send('set-side-panel', 1);
+			}
+		}));
+		menu.popup();
 	});
 
 	win.webContents.on('did-finish-load', () => {
 		win.webContents.send('set-platform', process.platform);
+		const show = (core.APP_CONFIG && Number(core.APP_CONFIG.show_side_panel) === 0) ? 0 : 1;
+		win.webContents.send('set-side-panel', show);
 	});
 }
 

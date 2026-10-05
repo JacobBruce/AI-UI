@@ -279,7 +279,8 @@ def PromptFilesSnapshot(aiui_home, workspace="", agent_id="", enabled_rules=None
 	}
 
 
-def SendPromptFilesEvent(aiui_home, workspace="", agent_id="", enabled_rules=None, enabled_skills=None):
+def SendPromptFilesEvent(aiui_home, workspace="", agent_id="", enabled_rules=None, enabled_skills=None, apply=True):
 	snap = PromptFilesSnapshot(aiui_home, workspace, agent_id, enabled_rules, enabled_skills)
+	snap["apply"] = bool(apply)
 	ipc.SendEvent("prompt_files", snap)
 	return snap

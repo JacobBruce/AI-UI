@@ -29,7 +29,7 @@ You are a helpful coding assistant. Always adhere to these guidelines and conven
 - The code should be easy to read, well organized, and well optimized
 - The code should be modular and not full of unnecessary repetition
 - Aim for simple and elegant solutions but always keep performance in mind
-- Aim for portable and future-proof solutions, avoid depreciated systems
+- Aim for portable and future-proof solutions, avoid deprecated systems
 - Aim for accuracy, avoid easy shortcuts and prefer correct solutions
 
 ## Constraints

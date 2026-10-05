@@ -3,9 +3,9 @@ var AI_CONFIG = {
 	msg_mem: 10, max_res: 32000, max_tool_result: 4000000, min_res: 1, do_sample: 1, num_beams: 1, beam_groups: 1, base_temp: 0.8, prompt_p: 0,
 	top_k: 50, top_p: 1.0, typical_p: 1.0, rep_penalty: 1.0,
 	frequency_penalty: 0, presence_penalty: 0,
-	compact_at: 0, compact_tail_tokens: 8000, compact_summary_max: 8192, git_status_context: 0,
+	compact_at: 0, compact_summary_max: 8192, git_status_context: 0,
 	temp_format: 'none',
-	enable_thinking: 'auto', reasoning_effort: 'auto',
+	reasoning_effort: 'auto',
 	tools_file: 'custom', tool_packs: null, firecrawl_api_key: ''
 };
 
@@ -153,6 +153,8 @@ var APP_CONFIG = {
 	avatar_img: '', script_dir: '', python_bin: '', model_dir: '', sd_model: '', tts_model: '', sr_model: '', model_args: '', model_type: 0, imodel_type: 0, smodel_type: 0, comp_dev: 'auto', start_meth: 'none',
 	format_mode: 0, gen_mode: 0, enable_tooluse: 1, enable_devmode: 0, enable_asasro: 0, start_rec_keys: '', stop_rec_keys: '', hf_token: '',
 	ui_theme: 'modern',
+	show_side_panel: 1,
+	show_app_menu: 1,
 	text_backend: 'local', remote_base_url: '', remote_model: '', remote_api_key: '', remote_provider: '',
 	remote_tool_format: 'openai',
 	remote_prompt_cache: 1,
@@ -209,12 +211,24 @@ function SetConfigs(configs) {
 	if (AI_CONFIG.tools_file == 'roleplay') AI_CONFIG.tools_file = 'custom';
 	AI_CONFIG.tool_packs = NormalizeNativePacks(AI_CONFIG.tool_packs, AI_CONFIG.tools_file);
 	if (!AI_CONFIG.firecrawl_api_key) AI_CONFIG.firecrawl_api_key = '';
-	AI_CONFIG.reasoning_effort = NormReasoningEffort(AI_CONFIG.reasoning_effort);
+	const savedThinking = configs.ai && configs.ai.enable_thinking;
+	AI_CONFIG.reasoning_effort = MergeReasoningEffort(AI_CONFIG.reasoning_effort, savedThinking);
+	delete AI_CONFIG.enable_thinking;
 	AI_CONFIG.git_status_context = Number(AI_CONFIG.git_status_context) ? 1 : 0;
 	const mtr = Number(AI_CONFIG.max_tool_result);
 	AI_CONFIG.max_tool_result = (Number.isFinite(mtr) && mtr >= 1) ? Math.floor(mtr) : 4000000;
 	APP_CONFIG.remote_tool_format = NormRemoteToolFormat(APP_CONFIG.remote_tool_format);
 	APP_CONFIG.text_backend = (String(APP_CONFIG.text_backend || 'local') === 'remote') ? 'remote' : 'local';
+	if (APP_CONFIG.show_side_panel == null || APP_CONFIG.show_side_panel === '') {
+		APP_CONFIG.show_side_panel = 1;
+	} else {
+		APP_CONFIG.show_side_panel = (Number(APP_CONFIG.show_side_panel) === 0) ? 0 : 1;
+	}
+	if (APP_CONFIG.show_app_menu == null || APP_CONFIG.show_app_menu === '') {
+		APP_CONFIG.show_app_menu = 1;
+	} else {
+		APP_CONFIG.show_app_menu = (Number(APP_CONFIG.show_app_menu) === 0) ? 0 : 1;
+	}
 	if (APP_CONFIG.remote_prompt_cache == null || APP_CONFIG.remote_prompt_cache === '') {
 		APP_CONFIG.remote_prompt_cache = 1;
 	} else {
@@ -294,10 +308,20 @@ function NormRemoteToolFormat(raw) {
 
 function NormReasoningEffort(raw) {
 	const t = String(raw || 'auto').toLowerCase();
-	if (t === 'none') return 'auto';
+	if (t === 'none' || t === 'false' || t === '0' || t === 'no') return 'off';
 	if (t === 'minimal') return 'low';
-	if (t === 'auto' || t === 'low' || t === 'medium' || t === 'high' || t === 'xhigh' || t === 'max') return t;
+	if (t === 'auto' || t === 'off' || t === 'low' || t === 'medium' || t === 'high' || t === 'xhigh' || t === 'max') return t;
 	return 'auto';
+}
+
+function ThinkingWasOff(raw) {
+	const t = String(raw || '').toLowerCase();
+	return t === 'false' || t === '0' || t === 'no' || t === 'off';
+}
+
+function MergeReasoningEffort(effort, enableThinking) {
+	const e = NormReasoningEffort(effort);
+	return ThinkingWasOff(enableThinking) ? 'off' : e;
 }
 
 function ConfigTools(tools_config) {
@@ -335,12 +359,14 @@ function ConfigAI(ai_config) {
 	if (ai_config.hasOwnProperty('presence_penalty')) AI_CONFIG.presence_penalty = Number(ai_config.presence_penalty);
 	if (ai_config.hasOwnProperty('prp')) AI_CONFIG.presence_penalty = Number(ai_config.prp);
 	if (ai_config.hasOwnProperty('compact_at')) AI_CONFIG.compact_at = Number(ai_config.compact_at);
-	if (ai_config.hasOwnProperty('compact_tail_tokens')) AI_CONFIG.compact_tail_tokens = Number(ai_config.compact_tail_tokens);
 	if (ai_config.hasOwnProperty('compact_summary_max')) AI_CONFIG.compact_summary_max = Number(ai_config.compact_summary_max);
 	if (ai_config.hasOwnProperty('git_status_context')) AI_CONFIG.git_status_context = Number(ai_config.git_status_context) ? 1 : 0;
 	if (ai_config.hasOwnProperty('temp_format')) AI_CONFIG.temp_format = NormTempFormat(ai_config.temp_format);
-	if (ai_config.hasOwnProperty('enable_thinking')) AI_CONFIG.enable_thinking = String(ai_config.enable_thinking || 'auto');
-	if (ai_config.hasOwnProperty('reasoning_effort')) AI_CONFIG.reasoning_effort = NormReasoningEffort(ai_config.reasoning_effort);
+	AI_CONFIG.reasoning_effort = MergeReasoningEffort(
+		ai_config.hasOwnProperty('reasoning_effort') ? ai_config.reasoning_effort : AI_CONFIG.reasoning_effort,
+		ai_config.hasOwnProperty('enable_thinking') ? ai_config.enable_thinking : undefined
+	);
+	delete AI_CONFIG.enable_thinking;
 	if (ai_config.hasOwnProperty('max_tool_result')) {
 		const n = Number(ai_config.max_tool_result);
 		AI_CONFIG.max_tool_result = (Number.isFinite(n) && n >= 1) ? Math.floor(n) : 4000000;
@@ -506,11 +532,9 @@ function BuildBootConfig() {
 			frequency_penalty: AI_CONFIG.frequency_penalty ?? 0,
 			presence_penalty: AI_CONFIG.presence_penalty ?? 0,
 			compact_at: AI_CONFIG.compact_at ?? 0,
-			compact_tail_tokens: AI_CONFIG.compact_tail_tokens ?? 8000,
 			compact_summary_max: AI_CONFIG.compact_summary_max ?? 8192,
 			git_status_context: AI_CONFIG.git_status_context ? 1 : 0,
-			enable_thinking: AI_CONFIG.enable_thinking || 'auto',
-			reasoning_effort: NormReasoningEffort(AI_CONFIG.reasoning_effort)
+			reasoning_effort: MergeReasoningEffort(AI_CONFIG.reasoning_effort)
 		},
 		voice: {
 			bot_voice: CHAT_CONFIG.bot_voice,
@@ -571,12 +595,10 @@ function BuildCmdParams(name) {
 				frequency_penalty: AI_CONFIG.frequency_penalty ?? 0,
 				presence_penalty: AI_CONFIG.presence_penalty ?? 0,
 				compact_at: AI_CONFIG.compact_at ?? 0,
-				compact_tail_tokens: AI_CONFIG.compact_tail_tokens ?? 8000,
 				compact_summary_max: AI_CONFIG.compact_summary_max ?? 8192,
 				git_status_context: AI_CONFIG.git_status_context ? 1 : 0,
 				temp_format: AI_CONFIG.temp_format,
-				enable_thinking: AI_CONFIG.enable_thinking || 'auto',
-				reasoning_effort: NormReasoningEffort(AI_CONFIG.reasoning_effort)
+				reasoning_effort: MergeReasoningEffort(AI_CONFIG.reasoning_effort)
 			};
 		case 'config_other':
 			return {

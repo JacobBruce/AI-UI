@@ -95,7 +95,6 @@ firecrawl_api_key = str(_tools.get("firecrawl_api_key", "") or "")
 
 msg_mem = int(_ai.get("msg_mem", 10))
 compact_at = int(_ai.get("compact_at", 0))
-compact_tail_tokens = int(_ai.get("compact_tail_tokens", 8000))
 compact_summary_max = int(_ai.get("compact_summary_max", 8192))
 git_status_context = int(_ai.get("git_status_context", 0) or 0)
 compact_summary = ""
@@ -120,19 +119,12 @@ typical_p = float(_ai.get("typical_p", 1.0))
 rep_penalty = float(_ai.get("rep_penalty", 1.0))
 frequency_penalty = float(_ai.get("frequency_penalty", 0.0))
 presence_penalty = float(_ai.get("presence_penalty", 0.0))
-enable_thinking = str(_ai.get("enable_thinking", "auto") or "auto")
 
-def _NormReasoningEffort(raw):
-	t = str(raw or "auto").strip().lower()
-	if t == "none":
-		return "auto"
-	if t == "minimal":
-		return "low"
-	if t in ("auto", "low", "medium", "high", "xhigh", "max"):
-		return t
-	return "auto"
+from lib.chat_template import MergeReasoningEffort
 
-reasoning_effort = _NormReasoningEffort(_ai.get("reasoning_effort", "auto"))
+reasoning_effort = MergeReasoningEffort(
+	_ai.get("reasoning_effort", "auto"), _ai.get("enable_thinking"),
+)
 rando_min = rando_lvl
 rando_add = 0.05
 rando_sub = 0.01
@@ -232,6 +224,7 @@ from lib import fs_sandbox, tool_permissions, text_backend as text_backend_mod, 
 from lib import remote_tools as remote_tools_mod
 from lib import context_compact as context_compact_mod
 from lib import git_context as git_context_mod
+from lib import edit_last as edit_last_mod
 import sys as _sys
 _engine = _sys.modules[__name__]
 
@@ -545,7 +538,7 @@ def _RunToolCallBlock(raw_inner, aiui_funcs, on_result=None):
 			args = call.get("arguments") or {}
 			call_id = str(call.get("id") or "")
 			if ipc.StopRequested():
-				content = "ERROR: tool call denied by user"
+				content = "Stopped before this tool ran."
 				slots.append((name, content, None, True, call_id))
 				FlushReady()
 				continue
@@ -708,11 +701,6 @@ def _RunBotTurn():
 	max_rounds = 24
 	aiui_funcs = { "GenImageIPA": GenImageIPA, "GenImage": GenImage }
 	stream_open = False
-	try:
-		git_context_mod.EnsureGitContext(freeze=True)
-	except Exception as e:
-		ipc.LogException("git_context", e)
-		git_context_mod.ClearGitContext()
 	# Compact once per turn (before any generate / tool round).
 	try:
 		context_compact_mod.RunCompactIfNeeded()
@@ -804,6 +792,8 @@ def _RunBotTurn():
 					payload = {"name": tool_name, "content": tc_result}
 					if call_id:
 						payload["id"] = call_id
+					if is_err:
+						payload["error"] = True
 					tr_data = json.dumps(payload)
 					messages.append(chat.StampMsg({
 						"role": bot_name,
@@ -926,8 +916,6 @@ def _RunBotTurn():
 		PrintSleep("BOT_NOANIM:" + err.replace("\n", "[AI_UI_BR]"))
 		chat_files = []
 		PrunePrompt()
-	finally:
-		git_context_mod.EnsureGitContext(freeze=False)
 
 def _SyncTemplateFlags():
 	global use_chat_template, use_aiui_template, aiui_tool_instructions
@@ -1011,9 +999,9 @@ def HandleCmd(msg):
 	global init_prompt, messages, prompt, chat_files
 	global voice_key, voice_vol, voice_rate, voice_ps, talk_mode, tts_mode, anim_mode, avatar_img
 	global msg_mem, gen_max, tool_result_max, gen_min, do_sample, num_beams, beam_groups
-	global compact_at, compact_tail_tokens, compact_summary_max, git_status_context
+	global compact_at, compact_summary_max, git_status_context
 	global rando_lvl, prompt_p, top_k, top_p, typical_p, rep_penalty, frequency_penalty, presence_penalty, rando_min
-	global enable_thinking, reasoning_effort, mm_processor
+	global reasoning_effort, mm_processor
 	global gen_mode, format_mode, enable_tooluse, hf_access_token
 	global text_backend, remote_base_url, remote_model, remote_api_key, remote_provider, remote_tool_format, remote_prompt_cache
 	global temp_form, tool_mode, tool_packs, firecrawl_api_key
@@ -1033,28 +1021,39 @@ def HandleCmd(msg):
 		ipc.LogErr('------ END PROMPT ------')
 		ipc.SendEvent("prompt_dump", {"text": prompt})
 	elif name == "compose_prompt":
-		active_agent = str(p.get("agent", active_agent) or "")
-		if "enabled_rules" in p:
-			enabled_rules = p.get("enabled_rules")
-		if "enabled_skills" in p:
-			enabled_skills = p.get("enabled_skills")
+		req_agent = str(p.get("agent", active_agent) or "")
+		req_rules = p.get("enabled_rules") if "enabled_rules" in p else enabled_rules
+		req_skills = p.get("enabled_skills") if "enabled_skills" in p else enabled_skills
+		req_ws = workspace_dir
 		if "workspace" in p:
-			workspace_dir = str(p.get("workspace", "") or "").rstrip('/\\')
-		snap = prompt_files.SendPromptFilesEvent(aiui_home, workspace_dir, active_agent, enabled_rules, enabled_skills)
-		active_agent = snap.get("agent", "")
-		enabled_rules = snap.get("enabled_rules")
-		enabled_skills = snap.get("enabled_skills")
-		if prompt_p < 2:
+			req_ws = str(p.get("workspace", "") or "").rstrip('/\\')
+		apply = p.get("apply", 1) not in (0, False, "0", "false")
+		save = p.get("save", 0) not in (0, False, "0", "false") or apply
+		snap = prompt_files.SendPromptFilesEvent(
+			aiui_home, req_ws, req_agent, req_rules, req_skills, apply=apply,
+		)
+		if save:
+			active_agent = snap.get("agent", "")
+			enabled_rules = snap.get("enabled_rules")
+			enabled_skills = snap.get("enabled_skills")
+			if "workspace" in p:
+				workspace_dir = req_ws
+		if apply and prompt_p < 2:
 			chat.ApplySystemPrompt(snap.get("composed") or "")
 			PrunePrompt()
 	elif name == "update_prompt":
 		init_prompt = str(p.get("prompt", p.get("init_prompt", ""))).replace("[AI_UI_BR]", "\n").replace("\r", '')
 		if prompt_p < 2:
 			PrunePrompt()
+			old = ""
+			if len(messages) > 0 and str(messages[0].get("role") or "").lower() == "system":
+				old = str(messages[0].get("content") or "")
 			if len(messages) > 0:
 				messages[0] = chat.StampMsg({"role":"system", "content":init_prompt})
 			else:
 				messages = [chat.StampMsg({"role":"system", "content":init_prompt})]
+			if old != init_prompt:
+				remote_tools_mod.WarnIfAnthropicPrefixMayBreak("system prompt")
 		PrunePrompt()
 	elif name == "clear_chat":
 		InitPrompt(True)
@@ -1142,8 +1141,6 @@ def HandleCmd(msg):
 				context_compact_mod.OnCompactEnabledChanged(False)
 			elif prev_ca <= 0 and compact_at > 0:
 				context_compact_mod.OnCompactEnabledChanged(True)
-		if "compact_tail_tokens" in p:
-			compact_tail_tokens = int(p.get("compact_tail_tokens", compact_tail_tokens))
 		if "compact_summary_max" in p:
 			compact_summary_max = int(p.get("compact_summary_max", compact_summary_max))
 		if "git_status_context" in p:
@@ -1170,10 +1167,11 @@ def HandleCmd(msg):
 		if "presence_penalty" in p or "prp" in p:
 			presence_penalty = float(p.get("presence_penalty", p.get("prp", presence_penalty)))
 		rando_min = rando_lvl
-		if "enable_thinking" in p:
-			enable_thinking = str(p.get("enable_thinking") or "auto")
-		if "reasoning_effort" in p:
-			reasoning_effort = _NormReasoningEffort(p.get("reasoning_effort") or "auto")
+		if "reasoning_effort" in p or "enable_thinking" in p:
+			reasoning_effort = MergeReasoningEffort(
+				p.get("reasoning_effort", reasoning_effort),
+				p.get("enable_thinking") if "enable_thinking" in p else None,
+			)
 		# Settings Apply always wins over boot/model_args locks (use_tool_config).
 		if "temp_form" in p or "temp_format" in p:
 			_ApplyTemplateFormat(p.get("temp_form", p.get("temp_format", temp_form)))
@@ -1187,6 +1185,7 @@ def HandleCmd(msg):
 					messages[0] = chat.StampMsg({"role":"system", "content":init_prompt})
 				else:
 					messages = [chat.StampMsg({"role":"system", "content":init_prompt})]
+			remote_tools_mod.WarnIfAnthropicPrefixMayBreak("system prompt")
 		PrunePrompt()
 	elif name == "config_other":
 		gen_mode = int(p.get("gen_mode", gen_mode))
@@ -1366,23 +1365,40 @@ def HandleCmd(msg):
 		GetUserNames()
 		InitPrompt()
 	elif name == "redo_last":
-		# Prefer live transcript over redo_count: STOP/empty clears redo_count to 0
-		# even when a user turn is still waiting for a reply.
-		n = chat.DeriveRedoCount(messages)
-		if n == 0 and not chat.LastTurnAwaitingReply(messages):
-			PrintSleep("BOT_NOANIM:Unable to redo last response.")
+		new_text = str(p.get("text", "")).replace("[AI_UI_BR]", "\n").replace("\r", "").strip()
+		if new_text:
+			edited = edit_last_mod.ApplyEditLastUser(messages, new_text, user_name)
+			if edited is None:
+				PrintSleep("BOT_NOANIM:Unable to edit last message.")
+			else:
+				messages = edited
+				last = messages[-1] if messages else None
+				if isinstance(last, dict):
+					last.pop(git_context_mod.GIT_STATUS_KEY, None)
+					git_context_mod.StampUserGitStatus(last)
+				PrunePrompt()
+				rando_lvl += rando_add
+				_RunBotTurn()
 		else:
-			if n > 0:
-				if n < len(messages):
-					messages = messages[:-n]
-				elif len(messages) > 0:
-					messages = [messages[0]]
-			PrunePrompt()
-			rando_lvl += rando_add
-			_RunBotTurn()
+			# Prefer live transcript over redo_count: STOP/empty clears redo_count to 0
+			# even when a user turn is still waiting for a reply.
+			n = chat.DeriveRedoCount(messages)
+			if n == 0 and not chat.LastTurnAwaitingReply(messages):
+				PrintSleep("BOT_NOANIM:Unable to redo last response.")
+			else:
+				if n > 0:
+					if n < len(messages):
+						messages = messages[:-n]
+					elif len(messages) > 0:
+						messages = [messages[0]]
+				PrunePrompt()
+				rando_lvl += rando_add
+				_RunBotTurn()
 	elif name == "cont_chat":
 		if use_chat_template:
-			messages.append(chat.StampMsg({"role":user_name, "content":"continue"}))
+			messages.append(git_context_mod.StampUserGitStatus(
+				chat.StampMsg({"role":user_name, "content":"continue"})
+			))
 		_RunBotTurn()
 	elif name == "chat":
 		# Optional files on the same cmd — avoid a prior attach_files that would
@@ -1411,11 +1427,15 @@ def HandleCmd(msg):
 			if msg_one != '':
 				prompt += "\n"+user_name+roles_append_str+msg_one
 				if mm_msg == None:
-					messages.append(chat.StampMsg({"role": user_name, "content": msg_one}))
+					messages.append(git_context_mod.StampUserGitStatus(
+						chat.StampMsg({"role": user_name, "content": msg_one})
+					))
 				else:
 					mm_msg["content"].append({"type": "text", "text": msg_one, "user":True})
 
-		if mm_msg != None: messages.append(mm_msg)
+		if mm_msg != None:
+			git_context_mod.StampUserGitStatus(mm_msg)
+			messages.append(mm_msg)
 		_RunBotTurn()
 	else:
 		ipc.LogErr(f"Unknown cmd: {name}")

@@ -12,6 +12,31 @@ def _DateString() -> str:
 	return datetime.now().strftime("%d %b %Y")
 
 
+_FALSEY_THINKING = ("false", "0", "no", "off")
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+def NormReasoningEffort(raw):
+	"""Stored Reasoning Effort: auto | off | low | medium | high | xhigh | max."""
+	t = str(raw or "auto").strip().lower()
+	if t in ("none", "false", "0", "no"):
+		return "off"
+	if t == "minimal":
+		return "low"
+	if t in ("auto", "off") or t in EFFORT_LEVELS:
+		return t
+	return "auto"
+
+
+def MergeReasoningEffort(effort, enable_thinking=None):
+	"""Fold legacy Enable Thinking into one effort value (false → off)."""
+	out = NormReasoningEffort(effort)
+	et = str(enable_thinking or "").strip().lower()
+	if et in _FALSEY_THINKING:
+		return "off"
+	return out
+
+
 def _DatePreamble() -> str:
 	return (
 		"{%- if not date_string is defined %}{%- set date_string = "
@@ -301,17 +326,11 @@ def ThinkingKwargs(engine=None) -> dict:
 	kw = {}
 	if engine is None:
 		return kw
-	et = str(getattr(engine, "enable_thinking", "auto") or "auto").strip().lower()
-	if et in ("true", "1", "yes", "on"):
-		kw["enable_thinking"] = True
-	elif et in ("false", "0", "no", "off"):
+	re = NormReasoningEffort(getattr(engine, "reasoning_effort", "auto"))
+	if re == "off":
 		kw["enable_thinking"] = False
-	re = str(getattr(engine, "reasoning_effort", "auto") or "auto").strip().lower()
-	if re == "none":
-		re = "auto"
-	elif re == "minimal":
-		re = "low"
-	if re and re != "auto" and re in ("low", "medium", "high", "xhigh", "max"):
+	elif re in EFFORT_LEVELS:
+		kw["enable_thinking"] = True
 		kw["reasoning_effort"] = re
 	return kw
 

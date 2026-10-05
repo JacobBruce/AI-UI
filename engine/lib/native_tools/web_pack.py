@@ -23,6 +23,7 @@ _DATA_URI_RE = re.compile(
 TOOLS = [
 	{
 		"name": "web_search",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Performs a web search via Firecrawl. Supports news and images via search_mode, "
 			"and academic or GitHub-focused results via category. "
@@ -67,6 +68,7 @@ TOOLS = [
 	},
 	{
 		"name": "get_web_page",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Returns the contents of a web page as HTML or Markdown. "
 			"Uses Firecrawl when an API key is configured; otherwise falls back to HTTP fetch + markdown conversion. "

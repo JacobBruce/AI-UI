@@ -3,6 +3,7 @@ import { state } from './state.js';
 import {
 	TrimLast, DisableButtons, StopGenerating, EncodeHTML, VoiceOptionLabel,
 	ShortcutKeyDown, ShortcutKeyUp, PathToFileURL, ApplyUiTheme, NormalizeThemeId,
+	ApplySidePanel,
 	SetEngineReady, SyncSessionMenuLock, WireOverlayDismiss, NormMmProcessor, WhenDomReady
 } from './util.js';
 import {
@@ -16,13 +17,13 @@ import {
 } from './tool_packs.js';
 import { WireToolPermEvents } from './tool_perm.js';
 import {
-	ToggleEditPrompt, TogglePromptFiles, ApplyNewPrompt, ReloadPromptFromFiles,
+	ToggleEditPrompt, TogglePromptFiles, ApplyNewPrompt,
 	OnAgentChanged, HandlePromptFiles, ShowPromptChip, RefreshPrompt, PushPromptFileConfig
 } from './prompt_files.js';
 
 export {
 	RenderToolPacks, ToggleEditPrompt, TogglePromptFiles, ApplyNewPrompt,
-	ReloadPromptFromFiles, OnAgentChanged, ShowPromptChip, RefreshPrompt
+	OnAgentChanged, ShowPromptChip, RefreshPrompt
 };
 
 export function NormTempFormat(raw) {
@@ -41,10 +42,20 @@ export function NormRemoteToolFormat(raw) {
 
 export function NormReasoningEffort(raw) {
 	const t = String(raw || 'auto').toLowerCase();
-	if (t === 'none') return 'auto';
+	if (t === 'none' || t === 'false' || t === '0' || t === 'no') return 'off';
 	if (t === 'minimal') return 'low';
-	if (t === 'auto' || t === 'low' || t === 'medium' || t === 'high' || t === 'xhigh' || t === 'max') return t;
+	if (t === 'auto' || t === 'off' || t === 'low' || t === 'medium' || t === 'high' || t === 'xhigh' || t === 'max') return t;
 	return 'auto';
+}
+
+function ThinkingWasOff(raw) {
+	const t = String(raw || '').toLowerCase();
+	return t === 'false' || t === '0' || t === 'no' || t === 'off';
+}
+
+export function MergeReasoningEffort(effort, enableThinking) {
+	const e = NormReasoningEffort(effort);
+	return ThinkingWasOff(enableThinking) ? 'off' : e;
 }
 
 function HidePages() {
@@ -366,13 +377,11 @@ export function ApplyConfig() {
 		const freqp = $('#frequency_penalty').val();
 		const presp = $('#presence_penalty').val();
 		const compactAt = $('#compact_at').val();
-		const compactTail = $('#compact_tail_tokens').val();
 		const compactSumMax = $('#compact_summary_max').val();
 		const gitStatusCtx = $('#git_status_context').find(':selected').val();
 		const dosmp = $('#ds_select').find(':selected').val();
 		const promptp = $('#pp_select').find(':selected').val();
 		const tempf = $('#template_select').find(':selected').val();
-		const ethink = $('#enable_thinking').find(':selected').val();
 		const reffort = NormReasoningEffort($('#reasoning_effort').find(':selected').val());
 		const caNum = Number(compactAt);
 		const rlNum = Number(maxrl);
@@ -387,30 +396,26 @@ export function ApplyConfig() {
 		state.do_sample != dosmp || state.num_beams != numbm || state.beam_groups != numbg ||
 		topk != state.top_k || topp != state.top_p || typp != state.typical_p || repp != state.rep_penalty ||
 		freqp != state.frequency_penalty || presp != state.presence_penalty ||
-		compactAt != state.compact_at || compactTail != state.compact_tail_tokens || compactSumMax != state.compact_summary_max ||
+		compactAt != state.compact_at || compactSumMax != state.compact_summary_max ||
 		gitStatusCtx != String(Number(state.git_status_context) ? 1 : 0) ||
 		state.prompt_p != promptp || state.temp_format != tempf ||
-		state.enable_thinking != ethink || state.reasoning_effort != reffort) {
+		state.reasoning_effort != reffort) {
 			ipcRenderer.send('config-ai', {
 				max_mmem: maxmm, max_tool_result: maxtrl, max_rlen: maxrl, min_rlen: minrl,
 				do_sample: dosmp, num_beams: numbm, beam_groups: numbg,
 				temp: btemp, tk: topk, tp: topp, typ: typp, rp: repp, pp: promptp,
 				fp: freqp, prp: presp,
 				compact_at: compactAt,
-				compact_tail_tokens: compactTail,
 				compact_summary_max: compactSumMax,
 				git_status_context: gitStatusCtx,
 				temp_format: tempf,
-				enable_thinking: ethink,
 				reasoning_effort: reffort
 			});
 			state.temp_format = tempf;
-			state.enable_thinking = ethink;
 			state.reasoning_effort = reffort;
 			state.frequency_penalty = freqp;
 			state.presence_penalty = presp;
 			state.compact_at = compactAt;
-			state.compact_tail_tokens = compactTail;
 			state.compact_summary_max = compactSumMax;
 			state.git_status_context = Number(gitStatusCtx) ? 1 : 0;
 			state.max_mm = maxmm;
@@ -711,6 +716,10 @@ export function InitUi() {
 		});
 	});
 
+	ipcRenderer.on('set-side-panel', (event, payload) => {
+		ApplySidePanel(payload);
+	});
+
 	ipcRenderer.on('init-ui', (event, payload) => {
 		if (payload.state !== false) {
 			if (payload.state == 'AI_UI_DEFAULT') {
@@ -989,6 +998,7 @@ export function InitUi() {
 		state.format_mode = app_config.format_mode;
 		state.ui_theme = NormalizeThemeId(app_config.ui_theme);
 		ApplyUiTheme(state.ui_theme);
+		ApplySidePanel(app_config.show_side_panel);
 		state.enable_tooluse = app_config.enable_tooluse;
 		state.enable_devmode = app_config.enable_devmode;
 		state.enable_asasro = app_config.enable_asasro;
@@ -1023,12 +1033,10 @@ export function InitUi() {
 		state.frequency_penalty = ai_config.frequency_penalty ?? 0;
 		state.presence_penalty = ai_config.presence_penalty ?? 0;
 		state.compact_at = ai_config.compact_at ?? 0;
-		state.compact_tail_tokens = ai_config.compact_tail_tokens ?? 8000;
 		state.compact_summary_max = ai_config.compact_summary_max ?? 8192;
 		state.git_status_context = Number(ai_config.git_status_context) ? 1 : 0;
 		state.temp_format = NormTempFormat(ai_config.temp_format);
-		state.enable_thinking = String(ai_config.enable_thinking || 'auto');
-		state.reasoning_effort = NormReasoningEffort(ai_config.reasoning_effort);
+		state.reasoning_effort = MergeReasoningEffort(ai_config.reasoning_effort, ai_config.enable_thinking);
 		if (app_config.hasOwnProperty('mm_processor')) {
 			state.mm_processor = NormMmProcessor(app_config.mm_processor);
 		}
@@ -1108,7 +1116,6 @@ export function InitUi() {
 		$('#frequency_penalty').val(state.frequency_penalty ?? 0);
 		$('#presence_penalty').val(state.presence_penalty ?? 0);
 		$('#compact_at').val(state.compact_at ?? 0);
-		$('#compact_tail_tokens').val(state.compact_tail_tokens ?? 8000);
 		$('#compact_summary_max').val(state.compact_summary_max ?? 8192);
 		$('#git_status_context').val(Number(state.git_status_context) ? 1 : 0);
 		UpdateContextUsage({
@@ -1117,7 +1124,6 @@ export function InitUi() {
 			gen_max: Number(state.max_rl) || 0
 		});
 		$('#template_select').val(NormTempFormat(state.temp_format));
-		$('#enable_thinking').val(state.enable_thinking || 'auto');
 		$('#reasoning_effort').val(NormReasoningEffort(state.reasoning_effort));
 		$('#am_select').val(state.mm_processor || 'auto');
 		SyncVisionSelectForBackend(state.text_backend);
@@ -1215,7 +1221,7 @@ export function WireUiEvents() {
 	});
 
 	$('#rules_toggles, #skills_toggles').on('change', 'input[type=checkbox]', function() {
-		PushPromptFileConfig(true);
+		PushPromptFileConfig('fill');
 	});
 
 	$('#is_select').on('change', function() {

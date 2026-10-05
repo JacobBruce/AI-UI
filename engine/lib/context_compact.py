@@ -13,19 +13,26 @@ from lib import ipc
 
 COMPACT_ROLE = "compact"
 
-_DEFAULT_PROMPT = """Context compaction was triggered because the conversation exceeded the configured token budget.
+_DEFAULT_PROMPT = """Context compaction was triggered. Write a handoff summary so you can continue this conversation after older turns are hidden.
 
-Write a concise handoff summary for yourself after compaction (target well under 10K tokens).
+The conversation to fold is already in this request, including any earlier compaction summary. Summarize the full conversation history visible to you.
 
-After compaction you will only see the summary plus a short recent tail of the conversation.
+The next turn will see this summary plus the latest user message. Do not assume you can reread the folded transcript or that the user will restate constraints.
 
-Retain what is needed to continue: goals, decisions, open tasks, tool results that still matter, etc.
+Preserve, even if the summary runs long:
+- Problems that came up and how they were handled
+- Options raised, tried, or set aside, and why
+- What the user asked for, decided, ruled out, or set as a preference or boundary
+- Where things stand: finished vs still open, promised, or next
+- Details that are hard to reconstruct: names, paths, numbers, dates, exact wording, links
 
-Prefer clarity over length - distill the context down to key information by omitting chatter and redundant tool noise.
+Keep the user's wording for requests and constraints. Compress your own explanations and redundant tool output to conclusions and results that still matter.
 
-If a prior compaction summary is present, merge anything still relevant into one updated summary.
+Do not duplicate content already captured in other artifacts (specs, plans, issues, commits, diffs). Reference them by path or URL instead.
 
-Output ONLY the handoff summary. No preamble, planning, or commentary about writing the summary.
+If a prior compaction summary is already present, merge anything still relevant into one updated summary.
+
+Output only the summary. No greeting, preamble, planning, tool calls, or commentary about writing the summary.
 """
 
 _USER_PROMPT_NAME = "compact_prompt.txt"
@@ -270,131 +277,6 @@ def FindKeepTailStart(messages):
 	return last_user
 
 
-def _LastUserIndex(messages):
-	idx = -1
-	for i, m in enumerate(messages or []):
-		if isinstance(m, dict) and not IsCompactNotice(m) and _IsUserMsg(m):
-			idx = i
-	return idx
-
-
-def _ToolXmlKind(msg):
-	"""'call', 'resp', or 'other' from stored assistant XML (not collapsed both)."""
-	if not isinstance(msg, dict):
-		return "other"
-	text = ContentToText(msg.get("content"))
-	has_call = "<tool_call>" in text
-	has_resp = "<tool_response>" in text
-	if has_call and not has_resp:
-		return "call"
-	if has_resp and not has_call:
-		return "resp"
-	return "other"
-
-
-def _TruncateMsgSuffix(msg, char_budget):
-	"""Keep the end of a message's text. Preserve tool XML wrappers when present."""
-	if not isinstance(msg, dict):
-		return msg
-	text = ContentToText(msg.get("content"))
-	if len(text) <= char_budget:
-		return msg
-	out = dict(msg)
-	kind = _ToolXmlKind(msg)
-	wrap = {"call": ("<tool_call>", "</tool_call>"), "resp": ("<tool_response>", "</tool_response>")}.get(kind)
-	if wrap:
-		open_t, close_t = wrap
-		start = text.find(open_t)
-		end = text.rfind(close_t)
-		if start >= 0 and end > start:
-			head = text[:start]
-			body = text[start + len(open_t):end]
-			tail = text[end + len(close_t):]
-			overhead = len(head) + len(open_t) + len(close_t) + len(tail)
-			keep = max(0, char_budget - overhead)
-			body = body[-keep:] if keep else ""
-			out["content"] = head + open_t + body + close_t + tail
-			if len(out["content"]) <= char_budget:
-				return out
-	out["content"] = text[-char_budget:]
-	return out
-
-
-def _DropOldestTailGroup(out, last_user):
-	"""Drop the oldest droppable message; tool_call takes following tool_response(s)."""
-	if last_user == 0:
-		drop_at = 1
-	else:
-		drop_at = 0
-	if drop_at >= len(out) or drop_at == last_user:
-		return out, last_user
-	end = drop_at + 1
-	if _ToolXmlKind(out[drop_at]) == "call":
-		while end < len(out) and end != last_user and _ToolXmlKind(out[end]) == "resp":
-			end += 1
-	n = end - drop_at
-	out = out[:drop_at] + out[end:]
-	if last_user >= end:
-		last_user -= n
-	return out, last_user
-
-
-def _CapTailByTokens(messages, max_tokens):
-	"""Trim from the front of the tail until under max_tokens.
-
-	Never drops the last user message (or truncates its text). Oversized non-user
-	messages are shortened in place (keep the end) before any message is deleted.
-	When a message must go, a `<tool_call>` is dropped with its following
-	`<tool_response>`s so remappers never see an orphan result.
-	"""
-	max_tokens = int(max_tokens or 0)
-	if max_tokens <= 0 or not messages:
-		return list(messages)
-	out = list(messages)
-	last_user = _LastUserIndex(out)
-
-	def over_budget():
-		return HeuristicTokensFromMessages(out) > max_tokens
-
-	def _fit_char_budget(idx):
-		others = HeuristicTokensFromMessages([m for j, m in enumerate(out) if j != idx])
-		remain = max_tokens - others
-		if remain <= 4:
-			return 0
-		return max(64, (remain - 4) * 4)
-
-	guard = 0
-	while len(out) > 1 and over_budget() and guard < 10000:
-		guard += 1
-		start = 1 if last_user == 0 else 0
-		trimmed = False
-		for i in range(start, len(out)):
-			if i == last_user:
-				continue
-			char_budget = _fit_char_budget(i)
-			if char_budget <= 0:
-				continue
-			text = ContentToText(out[i].get("content") if isinstance(out[i], dict) else "")
-			if len(text) > char_budget:
-				out[i] = _TruncateMsgSuffix(out[i], char_budget)
-				new = ContentToText(out[i].get("content") if isinstance(out[i], dict) else "")
-				if len(new) < len(text):
-					trimmed = True
-					break
-		if trimmed:
-			continue
-		prev_n = len(out)
-		out, last_user = _DropOldestTailGroup(out, last_user)
-		if len(out) >= prev_n:
-			break
-	if out and over_budget() and last_user != 0 and last_user != len(out) - 1:
-		idx = len(out) - 1
-		char_budget = _fit_char_budget(idx)
-		if char_budget > 0:
-			out[idx] = _TruncateMsgSuffix(out[idx], char_budget)
-	return out
-
-
 def _SystemMessages(messages):
 	out = []
 	for m in messages or []:
@@ -404,14 +286,17 @@ def _SystemMessages(messages):
 
 
 def _WireSourceParts(raw):
-	"""System + keep-tail originals currently sent (no summary, no copies)."""
+	"""System + keep-tail originals currently sent (no summary, no copies).
+
+	The keep-tail starts where the last compaction stopped folding (0 when there
+	is no notice), so every turn since that compaction stays on the wire verbatim
+	and the summary covers exactly what came before it. Only the turns the
+	summary already describes leave the wire.
+	"""
 	SyncCompactFromMessages(raw)
-	until = DeriveKeepStart(raw)
 	summary = str(getattr(E, "compact_summary", "") or "")
-	tail_budget = int(getattr(E, "compact_tail_tokens", 8000) or 8000)
-	system = _SystemMessages(raw[:until] if until else raw[:1])
-	if not system:
-		system = _SystemMessages(raw)
+	system = _SystemMessages(raw)
+	until = DeriveKeepStart(raw)
 	tail = []
 	for m in raw[until:]:
 		if not isinstance(m, dict) or IsCompactNotice(m):
@@ -419,31 +304,25 @@ def _WireSourceParts(raw):
 		if _IsSystemMsg(m) and system:
 			continue
 		tail.append(m)
-	if summary:
-		capped = _CapTailByTokens(tail, tail_budget)
-	else:
-		capped = list(tail)
-	return system, summary, capped
+	return system, summary, tail
 
 
 def HiddenHistoryMessages():
 	"""Stored conversation messages that are not on the current model wire.
 
-	Chronological (oldest first). Skips compact notices and the live system/tail.
-	Empty when compaction is off (those turns were pruned) or nothing has been
-	folded/capped yet. -1 in tool indices is the last entry of this list.
+	Chronological (oldest first). The folded region is everything before the
+	keep-tail start recorded on the last compact notice (`keep_back`), not a
+	set of message object ids. Skips compact notices and system messages (the
+	system prompt stays on the wire). Empty when compaction is off or nothing
+	has been folded yet. -1 in tool indices is the last entry of this list.
 	"""
 	raw = list(getattr(E, "messages", None) or [])
 	if getattr(E, "_compact_bypass", False) or not CompactEnabled():
 		return []
-	system, _summary, capped = _WireSourceParts(raw)
-	visible = {id(m) for m in system}
-	visible.update(id(m) for m in capped)
+	until = DeriveKeepStart(raw)
 	hidden = []
-	for m in raw:
-		if not isinstance(m, dict) or IsCompactNotice(m):
-			continue
-		if id(m) in visible:
+	for m in raw[:until]:
+		if not isinstance(m, dict) or IsCompactNotice(m) or _IsSystemMsg(m):
 			continue
 		hidden.append(m)
 	return hidden
@@ -457,11 +336,11 @@ def HiddenHistoryIndexRange():
 
 
 def BuildModelMessages(stub_old_media=True, sanitize=True):
-	"""Model-facing transcript: system + summary + keep-tail (no compact notices).
+	"""Model-facing transcript: system + optional summary user + keep-tail.
 
-	Keep-tail start is derived from the last compact notice in the transcript.
-	The recent-tail token cap applies only after a summary exists; until then
-	the full conversation is sent (Context Token Budget triggers compact).
+	Once a compact summary exists the wire is original system message(s), one
+	user handoff (the summary), then every turn since that compaction verbatim.
+	Folded turns and compact notices stay in E.messages / chat.json only.
 	When sanitize=False, keeps internal markers (e.g. _aiui_summary) for usage breakdown.
 	"""
 	raw = list(getattr(E, "messages", None) or [])
@@ -480,7 +359,7 @@ def BuildModelMessages(stub_old_media=True, sanitize=True):
 		out.append(copy.deepcopy(m))
 	if summary:
 		out.append({
-			"role": "system",
+			"role": "user",
 			"content": (
 				f"[Conversation summary after compaction "
 				f"#{int(getattr(E, 'compact_count', 0) or 0)}]\n{summary}"
@@ -752,8 +631,12 @@ def RecordRemoteUsage(usage):
 	"""Store provider response usage on E for mid/end-of-turn ring updates.
 
 	Accepts OpenAI (prompt_tokens/completion_tokens) or Anthropic
-	(input_tokens/output_tokens) shapes. Marks usage as fresh (valid until
-	tool results grow the transcript past this response).
+	(input_tokens/output_tokens) shapes. Anthropic reports cache hits separately
+	and leaves them out of input_tokens, so they are added back to get the real
+	prompt size. Fields the response omits keep their previous value: Anthropic
+	sends the prompt once in message_start and only output_tokens after that.
+	Marks usage as fresh (valid until tool results grow the transcript past
+	this response).
 	"""
 	if usage is None:
 		return False
@@ -761,8 +644,16 @@ def RecordRemoteUsage(usage):
 	completion = _UsageGet(usage, "completion_tokens", "output_tokens")
 	if prompt is None and completion is None:
 		return False
-	E.last_usage_prompt = 0 if prompt is None else max(0, prompt)
-	E.last_usage_completion = 0 if completion is None else max(0, completion)
+	if prompt is not None:
+		# OpenAI prompt_tokens already counts cached tokens (nested detail, not
+		# read here); Anthropic input_tokens is the uncached remainder only.
+		for name in ("cache_read_input_tokens", "cache_creation_input_tokens"):
+			cached = _UsageGet(usage, name)
+			if cached:
+				prompt += max(0, cached)
+		E.last_usage_prompt = max(0, prompt)
+	if completion is not None:
+		E.last_usage_completion = max(0, completion)
 	E.last_usage_stale = False
 	return True
 
@@ -805,31 +696,170 @@ def EmitCompacting(active):
 	ipc.SendEvent("context_usage", {"compacting": bool(active)})
 
 
-def _RegionForSummary(messages, keep_start):
-	"""Messages to fold into the summary (exclude system, compact notices, and keep-tail)."""
+def _RegionForSummary(messages, keep_start, start=0):
+	"""Messages to fold into the summary (exclude system, compact notices, and keep-tail).
+
+	`start` is the previous keep-tail start, so a later compaction only reads the
+	turns added since the last one - the prior summary carries the rest.
+	"""
+	msgs = messages or []
 	region = []
-	for i, m in enumerate(messages or []):
+	for i in range(max(0, int(start)), min(int(keep_start), len(msgs))):
+		m = msgs[i]
 		if not isinstance(m, dict):
 			continue
 		if IsCompactNotice(m) or _IsSystemMsg(m):
 			continue
-		if i >= keep_start:
-			break
 		region.append(m)
 	return region
 
 
-def _FormatRegionText(region, prior_summary):
+def _KeepTailStartOnWire(wire):
+	"""Index of the last real user message on the model wire (not the synthetic summary)."""
+	idx = -1
+	for i, m in enumerate(wire or []):
+		if not isinstance(m, dict) or m.get("_aiui_summary"):
+			continue
+		if _IsUserMsg(m):
+			idx = i
+	return idx
+
+
+def MessagesForSummarizer(wire=None):
+	"""Live model wire minus the keep-tail (last real user and anything after it).
+
+	That prefix is what the next summary must cover: system, any prior handoff,
+	and every turn since the last compact except the unanswered user message.
+	"""
+	msgs = wire if wire is not None else BuildModelMessages(sanitize=False)
+	idx = _KeepTailStartOnWire(msgs)
+	if idx < 0:
+		return []
+	prefix = [copy.deepcopy(m) for m in msgs[:idx]]
+	if not any(not _IsSystemMsg(m) for m in prefix):
+		return []
+	return prefix
+
+
+def _SummarizeInstruction(strict=False):
+	text = str(LoadCompactPrompt() or "").strip()
+	text += (
+		"\n\nWrite the compaction summary now. Output only the summary text. "
+		"Do not call tools."
+	)
+	if strict:
+		text += (
+			"\n\nCRITICAL: Your previous attempt was invalid meta-commentary. "
+			"Start immediately with the handoff facts. No 'Okay', no planning, "
+			"no description of what the summary should contain."
+		)
+	return text
+
+
+def _PlainPromptFromMessages(messages):
+	sep = str(getattr(E, "roles_append_str", ": ") or ": ")
 	lines = []
-	if prior_summary:
-		lines.append("### Prior compaction summary")
-		lines.append(prior_summary.strip())
-		lines.append("")
-	lines.append("### Conversation to summarize")
-	for m in region:
+	for m in messages or []:
+		if not isinstance(m, dict):
+			continue
 		role = str(m.get("role") or "user")
-		lines.append(f"{role}: {ContentToText(m.get('content'))}")
-	return "\n".join(lines).strip()
+		lines.append(role + sep + ContentToText(m.get("content")))
+	return "\n".join(lines)
+
+
+def _PrefixHasReasoningArtifacts(messages):
+	"""True when the prefix carries signed Anthropic thinking or OpenRouter details."""
+	for m in messages or []:
+		if not isinstance(m, dict):
+			continue
+		if m.get("_reasoning_details"):
+			return True
+		side = m.get("_anthropic_content")
+		if not isinstance(side, list):
+			continue
+		for b in side:
+			if isinstance(b, dict) and b.get("type") in ("thinking", "redacted_thinking"):
+				return True
+	return False
+
+
+def _SummarizeContinuation(prefix, max_tokens, *, strict=False):
+	"""Continue the live wire prefix and ask for a handoff summary.
+
+	Tools stay in the remote payload (`tool_choice: none`) so replayed thinking
+	blocks keep a matching tools list. Local omits tools so generate() cannot
+	emit a `<tool_call>`. Thinking stays enabled when the prefix has signed or
+	encrypted reasoning; otherwise effort is Off. The summarizer turn is
+	not stored on E.messages.
+	"""
+	from lib import text_backend as text_backend_mod
+	from lib import chat as chat_mod
+
+	max_tokens = max(256, int(max_tokens or 8192))
+	instruction = {
+		"role": _UserRole(),
+		"content": _SummarizeInstruction(strict),
+	}
+	ask = _SanitizeModelMessages(list(prefix or []) + [instruction])
+	if not ask:
+		return ""
+
+	E._compact_bypass = True
+	E._compact_summarize = True
+	saved_messages = E.messages
+	saved_prompt = getattr(E, "prompt", "")
+	saved_enable = getattr(E, "enable_tooluse", False)
+	saved_gen_max = getattr(E, "gen_max", 32000)
+	saved_gen_min = getattr(E, "gen_min", 1)
+	saved_effort = getattr(E, "reasoning_effort", "auto")
+	remote = bool(text_backend_mod.IsRemoteText())
+	try:
+		if not remote:
+			E.enable_tooluse = False
+		E.gen_max = max_tokens
+		E.gen_min = 1
+		# Signed / encrypted reasoning on the prefix must stay legal: Anthropic
+		# rejects thinking blocks when `thinking` is omitted, and OpenRouter
+		# rejects encrypted details when reasoning_effort is none. The summary
+		# itself is still stripped to plain text by `_CleanSummaryText`.
+		if not _PrefixHasReasoningArtifacts(prefix):
+			E.reasoning_effort = "off"
+		elif str(saved_effort or "").strip().lower() in ("off", "none", "false", "0", "no"):
+			E.reasoning_effort = "auto"
+		E.messages = ask
+		E.prompt = _PlainPromptFromMessages(ask)
+
+		if remote:
+			raw = text_backend_mod.RemoteChatReply(
+				temperature=0.2,
+				stream=False,
+				ui_stream=False,
+				on_block=None,
+				reuse_stream=False,
+			) or ""
+		else:
+			if getattr(E, "model", None) is None:
+				chat_mod.LoadModel()
+			it = chat_mod.TokenizeChat()
+			raw = chat_mod.GenReply(
+				it, 0.2, stream=False, reuse_stream=False, ui_stream=False, on_block=None,
+			) or ""
+		cleaned = _CleanSummaryText(raw)
+		ipc.LogErr(
+			f"Context compact summarize: raw_len={len(raw)} clean_len={len(cleaned)} "
+			f"max_tokens={max_tokens} strict={strict} prefix_msgs={len(prefix)} "
+			f"preview={cleaned[:120]!r}"
+		)
+		return cleaned
+	finally:
+		E.messages = saved_messages
+		E.prompt = saved_prompt
+		E.enable_tooluse = saved_enable
+		E.gen_max = saved_gen_max
+		E.gen_min = saved_gen_min
+		E.reasoning_effort = saved_effort
+		E._compact_bypass = False
+		E._compact_summarize = False
 
 
 def _CleanSummaryText(text):
@@ -877,104 +907,6 @@ def _LooksLikeMetaSummary(text):
 	return False
 
 
-def _SummarizeSideChannel(region_text, instruction, max_tokens, *, strict=False):
-	"""Run a no-tools, no-thinking completion; returns summary text.
-
-	max_tokens comes from Compact Summary Max (E.compact_summary_max), not Max Response Length.
-	"""
-	from lib import text_backend as text_backend_mod
-	from lib import chat as chat_mod
-
-	max_tokens = max(256, int(max_tokens or 8192))
-	user_blob = region_text
-	if len(user_blob) > 500_000:
-		user_blob = user_blob[:500_000] + "\n\n[truncated for summarization]"
-
-	strict_note = ""
-	if strict:
-		strict_note = (
-			"\n\nCRITICAL: Your previous attempt was invalid meta-commentary. "
-			"Start immediately with the handoff facts. No 'Okay', no planning, "
-			"no description of what the summary should contain."
-		)
-
-	# Clear instruction + transcript in one user turn (models often ignore system for this).
-	user_content = (
-		str(instruction or "").strip()
-		+ "\n\n---\n\n"
-		+ user_blob
-		+ "\n\n---\n\n"
-		+ "Write the compaction summary now. Output only the summary text."
-		+ strict_note
-	)
-
-	E._compact_bypass = True
-	saved_messages = E.messages
-	saved_prompt = getattr(E, "prompt", "")
-	saved_enable = getattr(E, "enable_tooluse", False)
-	saved_gen_max = getattr(E, "gen_max", 32000)
-	saved_gen_min = getattr(E, "gen_min", 1)
-	saved_thinking = getattr(E, "enable_thinking", "auto")
-	saved_effort = getattr(E, "reasoning_effort", "auto")
-	try:
-		E.enable_tooluse = False
-		E.gen_max = max_tokens
-		E.gen_min = 1
-		# Force a plain answer - thinking models often echo the last turn instead.
-		E.enable_thinking = "false"
-		E.reasoning_effort = "auto"
-		sys_msg = {
-			"role": "system",
-			"content": (
-				"You compress conversation context for a later turn of the same assistant. "
-				"Reply with only the handoff summary — factual bullet points or short "
-				"paragraphs. No greeting, no tool calls, no <think> blocks, no narration "
-				"about how you will write the summary."
-			),
-		}
-		E.messages = [
-			sys_msg,
-			{"role": _UserRole(), "content": user_content},
-		]
-		# Non-template local path reads E.prompt - keep it in sync with the side-channel.
-		sep = str(getattr(E, "roles_append_str", ": ") or ": ")
-		E.prompt = (
-			"system" + sep + sys_msg["content"] + "\n"
-			+ _UserRole() + sep + user_content
-		)
-
-		if text_backend_mod.IsRemoteText():
-			raw = text_backend_mod.RemoteChatReply(
-				temperature=0.2,
-				stream=False,
-				ui_stream=False,
-				on_block=None,
-				reuse_stream=False,
-			) or ""
-		else:
-			if getattr(E, "model", None) is None:
-				chat_mod.LoadModel()
-			it = chat_mod.TokenizeChat()
-			raw = chat_mod.GenReply(
-				it, 0.2, stream=False, reuse_stream=False, ui_stream=False, on_block=None,
-			) or ""
-		cleaned = _CleanSummaryText(raw)
-		ipc.LogErr(
-			f"Context compact summarize: raw_len={len(raw)} clean_len={len(cleaned)} "
-			f"max_tokens={max_tokens} strict={strict} preview={cleaned[:120]!r}"
-		)
-		return cleaned
-	finally:
-		E.messages = saved_messages
-		E.prompt = saved_prompt
-		E.enable_tooluse = saved_enable
-		E.gen_max = saved_gen_max
-		E.gen_min = saved_gen_min
-		E.enable_thinking = saved_thinking
-		E.reasoning_effort = saved_effort
-		E._compact_bypass = False
-
-
 def RunCompactIfNeeded():
 	"""If over budget, summarize older turns and update compact state. Returns True if compacted."""
 	if not CompactEnabled():
@@ -1014,34 +946,34 @@ def _DoCompact(prompt_tokens):
 	"""Summarize older turns into compact state. Caller must gate budget / force."""
 	raw = list(E.messages or [])
 	keep_start = FindKeepTailStart(raw)
-	region = _RegionForSummary(raw, keep_start)
-	prior = str(getattr(E, "compact_summary", "") or "")
+	prior_start = DeriveKeepStart(raw)
+	region = _RegionForSummary(raw, keep_start, prior_start)
+	prefix = MessagesForSummarizer()
 
-	# Edge: only the keep-tail exists (e.g. one huge user turn). Fold it into the
-	# summary region and advance past it so the wire can shrink to summary (+ tiny cap).
-	if not region and not prior:
-		if keep_start < len(raw):
-			region = _RegionForSummary(raw, keep_start + 1)
-			keep_start = keep_start + 1
-		if not region:
-			ipc.LogErr("WARN: compact triggered but nothing to summarize")
-			return False
+	# The keep-tail stays on the wire after compact; folding it would not shrink
+	# the request, and the last user turn must reach the model verbatim.
+	if not region or not prefix:
+		ipc.LogErr("WARN: compact triggered but nothing to summarize")
+		return False
 
-	instruction = LoadCompactPrompt()
-	region_text = _FormatRegionText(region, prior)
 	summary_max = int(getattr(E, "compact_summary_max", 8192) or 8192)
 	ipc.LogErr(
 		f"Context compact: prompt_tokens~{prompt_tokens} compact_at={getattr(E, 'compact_at', 0)} "
-		f"region_msgs={len(region)} keep_start={keep_start}"
+		f"region_msgs={len(region)} region_start={prior_start} keep_start={keep_start} "
+		f"prefix_msgs={len(prefix)}"
 	)
 	EmitCompacting(True)
 	try:
-		summary = (_SummarizeSideChannel(region_text, instruction, summary_max) or "").strip()
-		if _LooksLikeMetaSummary(summary):
-			ipc.LogErr("WARN: compact summary looked like meta-reasoning; retrying once")
-			summary = (_SummarizeSideChannel(
-				region_text, instruction, summary_max, strict=True,
-			) or "").strip()
+		try:
+			summary = (_SummarizeContinuation(prefix, summary_max) or "").strip()
+			if _LooksLikeMetaSummary(summary):
+				ipc.LogErr("WARN: compact summary looked like meta-reasoning; retrying once")
+				summary = (_SummarizeContinuation(
+					prefix, summary_max, strict=True,
+				) or "").strip()
+		except Exception as e:
+			ipc.LogException("context compact summarize", e)
+			return False
 		if not summary or _LooksLikeMetaSummary(summary):
 			ipc.LogErr("WARN: compaction produced unusable summary; leaving context unchanged")
 			return False

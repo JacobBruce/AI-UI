@@ -277,11 +277,14 @@ export function RenderPackToolsList() {
 			: !(disabled.has(name));
 		const checked = on ? 'checked' : '';
 		const desc = tool.description || '';
+		let hint = '';
+		if (tool.readOnlyHint === true) hint = '<span class="pack_tool_hint">read-only</span>';
+		else if (tool.readOnlyHint === false) hint = '<span class="pack_tool_hint">can write</span>';
 		$list.append(`
 			<div class="pack_tool_row">
 				<input type="checkbox" class="pack_tool_enable" data-name="${EncodeHTML(name)}" ${checked}>
 				<div class="pack_tool_meta">
-					<span class="pack_tool_name" title="${EncodeHTML(desc)}">${EncodeHTML(name)}</span>
+					<span class="pack_tool_name" title="${EncodeHTML(desc)}">${EncodeHTML(name)}</span>${hint}
 				</div>
 			</div>
 		`);

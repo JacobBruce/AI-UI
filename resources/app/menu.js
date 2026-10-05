@@ -29,7 +29,26 @@ function OpenSessionPicker(getWin, scope) {
 	});
 }
 
-function BuildAppMenu({ sessionOps, getWin, core, sessionLocked }) {
+function SidePanelVisible(core) {
+	const v = core && core.APP_CONFIG && core.APP_CONFIG.show_side_panel;
+	return v == null || Number(v) !== 0;
+}
+
+function AppMenuVisible(core) {
+	const v = core && core.APP_CONFIG && core.APP_CONFIG.show_app_menu;
+	return v == null || Number(v) !== 0;
+}
+
+/** Linux/Windows menu bar. Hidden keeps the menu registered so the accelerator still works; Alt reveals it. */
+function ApplyAppMenuBar(win, core) {
+	if (process.platform === 'darwin') return;
+	if (!win || win.isDestroyed()) return;
+	const on = AppMenuVisible(core);
+	win.setAutoHideMenuBar(!on);
+	win.setMenuBarVisibility(on);
+}
+
+function BuildAppMenu({ sessionOps, getWin, core, sessionLocked, saveGlobalConfig }) {
 	const st = sessions.GetState();
 	const canUse = !sessionLocked;
 	const projectOpen = !!st.workspace;
@@ -172,6 +191,34 @@ function BuildAppMenu({ sessionOps, getWin, core, sessionLocked }) {
 	viewSub.push(
 		{ role: 'togglefullscreen' },
 		{ type: 'separator' },
+		{
+			id: 'side-panel',
+			label: 'Side Panel',
+			type: 'checkbox',
+			checked: SidePanelVisible(core),
+			accelerator: 'CmdOrCtrl+B',
+			click: (item) => {
+				const on = item.checked ? 1 : 0;
+				if (core && core.APP_CONFIG) core.APP_CONFIG.show_side_panel = on;
+				if (typeof saveGlobalConfig === 'function') saveGlobalConfig();
+				const w = getWin();
+				if (w && !w.isDestroyed()) w.webContents.send('set-side-panel', on);
+			}
+		},
+		{
+			id: 'app-menu',
+			label: 'App Menu',
+			type: 'checkbox',
+			checked: AppMenuVisible(core),
+			accelerator: 'CmdOrCtrl+Shift+B',
+			click: (item) => {
+				const on = item.checked ? 1 : 0;
+				if (core && core.APP_CONFIG) core.APP_CONFIG.show_app_menu = on;
+				if (typeof saveGlobalConfig === 'function') saveGlobalConfig();
+				ApplyAppMenuBar(getWin(), core);
+			}
+		},
+		{ type: 'separator' },
 		{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }
 	);
 
@@ -224,4 +271,4 @@ function BuildAppMenu({ sessionOps, getWin, core, sessionLocked }) {
 	return menu;
 }
 
-module.exports = { BuildAppMenu };
+module.exports = { BuildAppMenu, ApplyAppMenuBar };

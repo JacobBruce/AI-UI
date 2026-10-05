@@ -17,6 +17,7 @@ _MAX_MSG_CHARS = 32_000
 TOOLS = [
 	{
 		"name": "status",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Runtime snapshot of AI UI: app version, Python, workspace vs Home, "
 			"text backend, tool-use flag, enabled packs, running MCP servers, and "
@@ -34,6 +35,7 @@ TOOLS = [
 	},
 	{
 		"name": "get_datetime",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Current date and time: ISO 8601 datetime, date, time, timezone name, "
 			"UTC offset, weekday, and Unix timestamp. Defaults to the system local "
@@ -53,6 +55,7 @@ TOOLS = [
 	},
 	{
 		"name": "context_usage",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Last-known chat token usage vs the Context Token Budget, plus how much "
 			"stored history sits outside the current context window. Uses stored "
@@ -70,6 +73,7 @@ TOOLS = [
 	},
 	{
 		"name": "chat_history",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Read stored chat messages that are outside the current context window "
 			"(compacted or dropped by the keep-tail cap). Prefer this tool over reading "
@@ -79,7 +83,7 @@ TOOLS = [
 			"Call context_usage first for the valid index_range. catalog=true returns "
 			"role/timestamp/chars without bodies so you can pick a range to fetch. "
 			"query is an optional case-insensitive substring filter: a string or list "
-			"of strings; a message is kept if ANY term appears in role or content (OR)."
+			"of strings; checks content and tool name, role is not searched."
 		),
 		"inputSchema": {
 			"type": "object",
@@ -102,7 +106,7 @@ TOOLS = [
 					"items": {"type": "string"},
 					"description": (
 						"Optional case-insensitive substring(s). Pass a string or a list of "
-						"strings. A message matches if any term appears in its role or content."
+						"strings. A message matches if any term appears in its content or tool name."
 					),
 				},
 			},
@@ -351,7 +355,17 @@ def _query_hits(msg, terms):
 	if not terms:
 		return True
 	from lib.context_compact import ContentToText
-	blob = (str(msg.get("role") or "") + "\n" + ContentToText(msg.get("content"))).casefold()
+	parts = [ContentToText(msg.get("content"))]
+	name = msg.get("name")
+	if name:
+		parts.append(str(name))
+	for call in msg.get("tool_calls") or []:
+		if not isinstance(call, dict):
+			continue
+		fn = call.get("function") if isinstance(call.get("function"), dict) else call
+		if isinstance(fn, dict) and fn.get("name"):
+			parts.append(str(fn.get("name")))
+	blob = "\n".join(parts).casefold()
 	return any(t.casefold() in blob for t in terms)
 
 
@@ -400,7 +414,7 @@ def _chat_history(start=None, end=None, catalog=False, query=None):
 				"index_range": None,
 			}
 		return {
-			"error": "no hidden history (nothing compacted or tail-capped yet)",
+			"error": "no hidden history (nothing compacted yet)",
 			"hidden": 0,
 			"index_range": None,
 		}
@@ -467,6 +481,6 @@ def call_tool(name, arguments=None, aiui_funcs=None):
 			return _context_usage()
 		if name == "chat_history":
 			return _chat_history(**arguments)
-		return "ERROR: unknown function"
+		return {"error": "unknown function"}
 	except Exception as e:
-		return f"ERROR: an exception occured ({e})"
+		return {"error": f"an exception occured ({e})"}

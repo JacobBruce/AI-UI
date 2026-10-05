@@ -22,7 +22,7 @@ Project files override Home on the same filename. Prefer project rules for repo-
 2. **Scope** — Home vs project `.aiui`
 3. **Filename** — short kebab-case `.md` (e.g. `python-style.md`)
 
-Infer from the conversation when possible. If scope is unclear, ask Home vs project.
+Infer from the conversation when possible. If scope is unclear, ask the user.
 
 ## File format
 
@@ -30,7 +30,8 @@ Plain markdown. Optional YAML frontmatter is stripped at load time (body only en
 
 ```markdown
 ---
-description: Short label for humans (optional; not shown in the rules UI)
+name: Rule name
+description: What the rule is for.
 ---
 
 # Rule title
@@ -38,23 +39,21 @@ description: Short label for humans (optional; not shown in the rules UI)
 Actionable instructions…
 ```
 
-AI UI does **not** use `.mdc` globs / `alwaysApply`. Each rule can be enabled/disabled in the Rules UI.
+AI UI does **not** use `.mdc` globs / `alwaysApply`.
 
 ## Authoring
 
-- Keep under ~100 lines; one concern per file
+- One concern per file — prefer several small rules over one large blob
 - Actionable and concrete — write like internal docs
-- Prefer several small rules over one large blob
 
 ## Enable new rules
 
 After writing a rule tell the user how to enable it in AI UI:
 
-  - Click the pen icon (on right side of prompt bar near top of screen)
-  - Click "Rules / Skills" button in the bottom left of the prompt editor dialog
-  - Click "Reload From Files" button so new rules appear in the catalog
-  - Click the checkbox next to a rule name to enable the rule
-  - Close the Rules & Skills dialog and click the Apply button in prompt editor
+1. Click the pen icon (on right side of prompt bar near top of screen)
+2. Click the "Rules / Skills" button in the bottom left of the system prompt editor
+3. Click the checkbox next to a rule name to enable the rule
+4. Close the Rules & Skills dialog and click the Apply button in prompt editor
 
 ## Checklist
 

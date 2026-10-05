@@ -394,6 +394,28 @@ p > code, li > code, td > code {
 	box-sizing: border-box;
 }
 
+html.side-panel-hidden #chat_side,
+html.side-panel-hidden #txtgen_side,
+html.side-panel-hidden #ttsgen_side,
+html.side-panel-hidden #imggen_side {
+	display: none;
+}
+
+html.side-panel-hidden #chat_box,
+html.side-panel-hidden #txtgen_box,
+html.side-panel-hidden #ttsgen_box,
+html.side-panel-hidden #imggen_box {
+	right: 0;
+	border-right: none;
+}
+
+html.side-panel-hidden #chat_app,
+html.side-panel-hidden #txtgen_app,
+html.side-panel-hidden #ttsgen_app,
+html.side-panel-hidden #imggen_app {
+	min-width: 400px;
+}
+
 #gen_result, #tts_result, #img_result {
 	padding: 20px;
 	position: absolute;
@@ -1028,14 +1050,13 @@ p > code, li > code, td > code {
 
 .pack_tool_row {
 	display: flex;
-	align-items: flex-start;
+	align-items: center;
 	gap: 8px;
-	padding: 5px 2px;
+	padding: 4px 2px 6px 2px;
 	border-bottom: 1px solid rgba(169, 187, 222, 0.2);
 }
 
 .pack_tool_row input {
-	margin-top: 2px;
 	flex-shrink: 0;
 }
 
@@ -1048,6 +1069,13 @@ p > code, li > code, td > code {
 	font-size: 13px;
 	font-weight: 600;
 	cursor: default;
+}
+
+.pack_tool_hint {
+	margin-left: 8px;
+	font-size: 11px;
+	font-weight: 500;
+	opacity: 0.65;
 }
 
 .tool_pack_name.pack-running {
@@ -1292,10 +1320,12 @@ p > code, li > code, td > code {
 }
 
 .prompt_files_box .pf_list label {
-	display: block;
+	display: flex;
 	font-size: 12px;
 	color: #bcc9e3;
-	margin: 2px 0;
+	margin: 3px 0;
+	align-items: center;
+	gap: 3px;
 }
 
 .prompt_files_box .pf_empty {
@@ -1836,14 +1866,13 @@ p > code, li > code, td > code {
 	position: sticky;
 	top: 0;
 	z-index: 2;
-	padding: 6px 0;
+	padding: 10px 0px 4px 0px;
 	text-align: center;
 }
 
 #prompt {
 	display: inline-flex;
 	align-items: center;
-	gap: 6px;
 	padding: 6px 10px;
 	max-width: calc(100% - 20px);
 	box-sizing: border-box;
@@ -1997,22 +2026,123 @@ p > code, li > code, td > code {
 
 .chat_msg {
 	padding: 4px 18px;
-	margin: 4px 50px 4px 10px;
+	margin: 6px 50px 4px 10px;
 	background-color: #293aa3;
 	display: inline-grid;
 	border-radius: 8px 8px 8px 0px;
-	overflow-x: auto;
+	overflow: visible;
+	position: relative;
 }
 
 .bot_msg {
 	padding: 4px 18px;
-	margin: 4px 10px 4px 50px;
+	margin: 6px 10px 4px 50px;
 	box-sizing: border-box;
 	background-color: #0d6f23;
 	display: inline-grid;
 	border-radius: 8px 0px 8px 8px;
 	float: right;
 	overflow-x: auto;
+	position: relative;
+}
+
+.msg_icon_btn {
+	position: absolute;
+	right: 6px;
+	bottom: 4px;
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	margin: 0;
+	border: 0;
+	background: transparent;
+	color: rgba(255, 255, 255, 0.8);
+	opacity: 0;
+	pointer-events: none;
+	cursor: pointer;
+	z-index: 2;
+	line-height: 0;
+	user-select: none;
+}
+
+.bot_msg:hover > .msg_copy_btn,
+.msg_box:hover > .chat_msg > .msg_edit_btn,
+.msg_copy_btn.copied {
+	opacity: 0.9;
+	pointer-events: auto;
+}
+
+.msg_icon_btn:hover {
+	opacity: 1;
+	color: #fff;
+}
+
+.msg_icon_btn svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+.msg_copy_btn .copy_front {
+	fill: #0d6f23;
+}
+
+.msg_copy_btn .copy_check,
+.msg_edit_btn .edit_save {
+	display: none;
+}
+
+.msg_copy_btn.copied .copy_icon,
+.msg_edit_btn.saving .edit_pen {
+	display: none;
+}
+
+.msg_copy_btn.copied .copy_check,
+.msg_edit_btn.saving .edit_save {
+	display: block;
+}
+
+#chat_log.chat_think_pad .msg_edit_btn {
+	opacity: 0 !important;
+	pointer-events: none !important;
+}
+
+.chat_msg > .msg_edit_btn {
+	right: auto;
+	left: 100%;
+	margin-left: 6px;
+	bottom: 4px;
+}
+
+.chat_msg.editing {
+	display: flex;
+	flex-direction: column;
+	overflow: visible;
+	box-sizing: border-box;
+}
+
+.chat_msg.editing > .msg_edit_btn {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.msg_edit_area {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	line-height: inherit;
+	outline: none;
+	box-sizing: border-box;
+	overflow-x: hidden;
+	overflow-y: scroll;
+	resize: none;
 }
 
 .ai_act summary {

@@ -211,11 +211,19 @@ def _catalog_entry(tools, disabled):
 		bare = tool.get("_native_name") or tool.get("_mcp_name") or ""
 		# Prefixed names; also honor legacy bare names in disabled_tools.
 		is_on = not _name_disabled(disabled, name, bare)
-		out.append({
+		entry = {
 			"name": name,
 			"description": tool.get("description", "") or "",
 			"enabled": is_on,
-		})
+		}
+		hint = tool.get("readOnlyHint", None)
+		if hint is None:
+			ann = tool.get("annotations")
+			if isinstance(ann, dict) and "readOnlyHint" in ann:
+				hint = ann.get("readOnlyHint")
+		if hint is not None:
+			entry["readOnlyHint"] = bool(hint)
+		out.append(entry)
 	return out
 
 def _mcp_schema_disabled(pack, schema):
@@ -347,6 +355,12 @@ def LoadToolFuncs(force_mcp_ids=None):
 	fc_key = str(getattr(E, "firecrawl_api_key", "") or "")
 	web_cfg = {"firecrawl_api_key": fc_key}
 
+	prev_tools = getattr(E, "tool_funcs", None)
+	try:
+		prev_sig = json.dumps(prev_tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")) if prev_tools else ""
+	except Exception:
+		prev_sig = str(prev_tools or "")
+
 	schemas = []
 	if E.enable_tooluse:
 		for p, mod in _enabled_native_modules(packs):
@@ -383,3 +397,11 @@ def LoadToolFuncs(force_mcp_ids=None):
 	catalog = BuildPackCatalog(packs)
 	E.tool_catalog = catalog
 	_emit_catalog(catalog)
+
+	try:
+		cur_sig = json.dumps(E.tool_funcs, ensure_ascii=False, sort_keys=True, separators=(",", ":")) if E.tool_funcs else ""
+	except Exception:
+		cur_sig = str(E.tool_funcs or "")
+	if prev_sig != cur_sig:
+		from lib import remote_tools
+		remote_tools.WarnIfAnthropicPrefixMayBreak("tools")

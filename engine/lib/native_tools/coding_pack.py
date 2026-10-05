@@ -66,6 +66,7 @@ DEFAULT_DISABLED_TOOLS = ["run_command"]
 TOOLS = [
 	{
 		"name": "glob_files",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Lists files matching a glob pattern (e.g. '**/*.py' or "
 			"'/path/to/dir/**/*.pdf'). Relative patterns use the open project "
@@ -100,6 +101,7 @@ TOOLS = [
 	},
 	{
 		"name": "grep_files",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Searches file contents for a regex. Returns matching lines as path:line:text. "
 			"Skips binaries and caps output. Brace globs like '**/*.{cpp,h}' are expanded. "
@@ -136,6 +138,7 @@ TOOLS = [
 	},
 	{
 		"name": "read_file",
+		"annotations": {"readOnlyHint": True},
 		"description": (
 			"Reads a text file without loading it all into memory. "
 			"By default returns the file up to a size cap (says when truncated). "
@@ -165,6 +168,7 @@ TOOLS = [
 	},
 	{
 		"name": "write_file",
+		"annotations": {"readOnlyHint": False},
 		"description": (
 			"Writes a text file. With no line params, creates or overwrites the whole file "
 			"(parent dirs are created as needed). With start_line only (1-based, -1 = before "
@@ -215,6 +219,7 @@ TOOLS = [
 	},
 	{
 		"name": "search_replace",
+		"annotations": {"readOnlyHint": False},
 		"description": (
 			"Replaces an exact substring in one file (not a regex). Fails if old_string is "
 			"not found or is not unique when replace_all is false."
@@ -246,6 +251,7 @@ TOOLS = [
 	},
 	{
 		"name": "run_command",
+		"annotations": {"readOnlyHint": False},
 		"description": (
 			"Runs a shell command in the workspace root (open project, or ~/.aiui on Home). "
 			"Use for mkdir, rm, mv, ls, git, tests, builds, and similar. "

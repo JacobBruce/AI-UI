@@ -1,13 +1,20 @@
-Context compaction was triggered because the conversation exceeded the configured token budget.
+Context compaction was triggered. Write a handoff summary so you can continue this conversation after older turns are hidden.
 
-Write a concise handoff summary for yourself after compaction (target well under 10K tokens).
+The conversation to fold is already in this request, including any earlier compaction summary. Summarize the full conversation history visible to you.
 
-After compaction you will only see the summary plus a short recent tail of the conversation.
+The next turn will see this summary plus the latest user message. Do not assume you can reread the folded transcript or that the user will restate constraints.
 
-Retain what is needed to continue: goals, decisions, open tasks, tool results that still matter, etc.
+Preserve, even if the summary runs long:
+- Problems that came up and how they were handled
+- Options raised, tried, or set aside, and why
+- What the user asked for, decided, ruled out, or set as a preference or boundary
+- Where things stand: finished vs still open, promised, or next
+- Details that are hard to reconstruct: names, paths, numbers, dates, exact wording, links
 
-Prefer clarity over length - distill the context down to key information by omitting chatter and redundant tool noise.
+Keep the user's wording for requests and constraints. Compress your own explanations and redundant tool output to conclusions and results that still matter.
 
-If a prior compaction summary is present, merge anything still relevant into one updated summary.
+Do not duplicate content already captured in other artifacts (specs, plans, issues, commits, diffs). Reference them by path or URL instead.
 
-Output ONLY the handoff summary. No preamble, planning, or commentary about writing the summary.
+If a prior compaction summary is already present, merge anything still relevant into one updated summary.
+
+Output only the summary. No greeting, preamble, planning, tool calls, or commentary about writing the summary.

@@ -501,28 +501,37 @@ def BuildRemoteChatPayload(model_id, messages, temperature, max_tokens, stream=T
 	Thinking/effort → chat_template_kwargs (serve) + top-level reasoning_effort (native OpenAI).
 	Phase 4 may pass already-budgeted messages from a context selector.
 	Does not send stop= — server-side EOS/template config owns turn ending.
+	openai.com gets no sampling params and `max_completion_tokens` (see below).
 	"""
+	from lib import remote_tools
+
 	payload = {
 		"model": model_id,
 		"messages": messages,
 		"stream": bool(stream),
-		"temperature": float(temperature),
 		"max_tokens": int(max_tokens),
 	}
-	top_p = float(getattr(E, "top_p", 1.0) or 1.0)
-	payload["top_p"] = top_p
-	fp = float(getattr(E, "frequency_penalty", 0.0) or 0.0)
-	pp = float(getattr(E, "presence_penalty", 0.0) or 0.0)
-	if fp != 0.0:
-		payload["frequency_penalty"] = fp
-	if pp != 0.0:
-		payload["presence_penalty"] = pp
+	if remote_tools.IsOfficialOpenAI():
+		# openai.com reasoning models (o-series, gpt-5) reject non-default
+		# temperature / top_p / penalties, and reject `max_tokens` in favour of
+		# `max_completion_tokens`. gpt-4o-class models accept the new spelling,
+		# so one host rule covers every openai.com model - at the cost of
+		# sampling control on the models that would still honour it.
+		payload["max_completion_tokens"] = payload.pop("max_tokens")
+	else:
+		payload["temperature"] = float(temperature)
+		payload["top_p"] = float(getattr(E, "top_p", 1.0) or 1.0)
+		fp = float(getattr(E, "frequency_penalty", 0.0) or 0.0)
+		pp = float(getattr(E, "presence_penalty", 0.0) or 0.0)
+		if fp != 0.0:
+			payload["frequency_penalty"] = fp
+		if pp != 0.0:
+			payload["presence_penalty"] = pp
 	# Final SSE chunk can carry usage when the server honors this (OpenAI + many hosts).
 	if payload.get("stream") and _WantStreamUsageMeta():
 		payload["stream_options"] = {"include_usage": True}
 	if extra:
 		payload.update(extra)
-	from lib import remote_tools
 	remote_tools.ApplyOpenAIThinkingFields(payload)
 	remote_tools.ApplyOpenAIToolFields(payload)
 	remote_tools.ApplyOpenAICacheFields(payload)
@@ -905,6 +914,12 @@ def _AnthropicBaseUrl():
 	return base or None
 
 
+def _AnthropicIsOfficial():
+	"""True when the request goes to Anthropic's own API (empty Base URL = default)."""
+	base = str(getattr(E, "remote_base_url", "") or "").strip().lower()
+	return not base or "api.anthropic.com" in base
+
+
 def _EnsureAnthropic():
 	try:
 		import anthropic  # noqa: F401
@@ -913,28 +928,72 @@ def _EnsureAnthropic():
 		return False
 
 
+def _AnthropicTimeoutSeconds(max_tokens):
+	"""Read timeout (seconds) for non-streaming Anthropic `messages.create`.
+
+	The SDK raises ValueError on non-streaming create when the client still has
+	DEFAULT_TIMEOUT and it estimates the call will run longer than 10 minutes
+	(`3600 * max_tokens / 128000`), or when `max_tokens` exceeds a per-model
+	non-streaming cap. Passing an explicit `timeout` on that create skips the
+	check. Streaming and `count_tokens` keep the SDK default (10 min read,
+	5s connect). Floor is 10 minutes; above that, same estimate as the SDKs.
+	"""
+	try:
+		n = int(max_tokens or 0)
+	except (TypeError, ValueError):
+		n = 0
+	n = max(1, n)
+	minimum = 10 * 60
+	calculated = (60 * 60 * n) / 128_000.0
+	return float(minimum if calculated < minimum else calculated)
+
+
+def _AnthropicNonStreamTimeout(max_tokens):
+	"""Timeout for non-streaming create only — long read, fast connect fail."""
+	seconds = _AnthropicTimeoutSeconds(max_tokens)
+	for mod_name in ("httpx2", "httpx"):
+		try:
+			mod = __import__(mod_name)
+			return mod.Timeout(seconds, connect=5.0)
+		except Exception:
+			continue
+	return seconds
+
+
 def _BuildAnthropicClient():
 	import anthropic
 
 	api_key = _AnthropicApiKey()
 	if not api_key:
 		raise RuntimeError("Remote API Key is required for Anthropic Messages")
-	kw = {"api_key": api_key}
+	# Anthropic's own API authenticates with `x-api-key`; third-party Messages
+	# endpoints (gateways, DeepSeek / GLM / Kimi) expect `Authorization: Bearer`.
+	# Either explicit kwarg also stops the SDK reading ANTHROPIC_* credentials.
+	# Do not set timeout here: streaming and count_tokens should keep the SDK
+	# default (10 min read, 5s connect). Non-stream create passes timeout itself.
+	if _AnthropicIsOfficial():
+		kw = {"api_key": api_key}
+	else:
+		kw = {"auth_token": api_key}
 	base = _AnthropicBaseUrl()
 	if base:
 		kw["base_url"] = base
 	return anthropic.Anthropic(**kw)
 
 
-def BuildAnthropicMessagesPayload(model_id, system, messages, temperature, max_tokens, stream=True):
-	"""Assemble Anthropic messages.create kwargs."""
+def BuildAnthropicMessagesPayload(model_id, system, messages, max_tokens, stream=True):
+	"""Assemble Anthropic messages.create kwargs.
+
+	No sampling params: Claude 4.7+ / Sonnet 5 / Fable 5 reject non-default
+	temperature / top_p / top_k on every request, and older models reject
+	temperature whenever thinking is on. Reasoning Effort is the only lever left.
+	"""
 	from lib import remote_tools
 
 	payload = {
 		"model": model_id,
 		"messages": messages,
 		"max_tokens": int(max_tokens),
-		"temperature": float(temperature),
 		"stream": bool(stream),
 	}
 	if system:
@@ -966,12 +1025,10 @@ def _FlushAnthropicToolUse(state, want_ui, on_block, block_ends, ipc):
 
 
 def _StoreAnthropicSidecar(content_blocks):
-	"""Keep only thinking blocks — text / tool_use replay from the XML transcript."""
+	"""Store the full Anthropic content array for later as-is replay."""
 	from lib import remote_tools
 
-	wire = remote_tools.ThinkingLeadBlocks(
-		remote_tools.ContentBlocksToWireList(content_blocks)
-	)
+	wire = remote_tools.ContentBlocksToWireList(content_blocks)
 	E._anthropic_last_content = wire or None
 
 
@@ -1016,7 +1073,14 @@ def _StreamViaAnthropic(create_kw, state, want_ui, on_block, block_ends, ipc):
 					state["stopped"] = True
 					break
 				etype = getattr(event, "type", None)
-				if etype == "content_block_start":
+				if etype == "message_start":
+					# Only event carrying input/cache tokens; Stop skips the final message.
+					started = getattr(event, "message", None)
+					usage = getattr(started, "usage", None) if started is not None else None
+					if usage is not None:
+						from lib import context_compact
+						context_compact.RecordRemoteUsage(usage)
+				elif etype == "content_block_start":
 					block = getattr(event, "content_block", None)
 					idx = getattr(event, "index", 0)
 					btype = getattr(block, "type", None) if block is not None else None
@@ -1038,7 +1102,9 @@ def _StreamViaAnthropic(create_kw, state, want_ui, on_block, block_ends, ipc):
 					if dtype == "text_delta":
 						text = getattr(delta, "text", None) or ""
 						if text:
-							action = _HandleDelta(text, state, want_ui, on_block, block_ends, ipc)
+							# Closes the <think> wrapper on the thinking → text switch.
+							piece = _CombineDeltaParts(text, None, state["think"])
+							action = _HandleDelta(piece, state, want_ui, on_block, block_ends, ipc)
 							if action != "continue":
 								break
 					elif dtype == "thinking_delta":
@@ -1103,8 +1169,9 @@ def _NonStreamViaAnthropic(create_kw, state, want_ui, ipc):
 
 	client = _BuildAnthropicClient()
 	kw = dict(create_kw)
-	kw["stream"] = False
-	resp = client.messages.create(**kw)
+	kw.pop("stream", None)
+	timeout = _AnthropicNonStreamTimeout(kw.get("max_tokens"))
+	resp = client.messages.create(timeout=timeout, **kw)
 	content_blocks = getattr(resp, "content", None) or []
 	_StoreAnthropicSidecar(content_blocks)
 	from lib import context_compact
@@ -1180,7 +1247,8 @@ def _CreateKwForOpenAI(create_kw):
 
 	OpenRouter reasoning_details is not a typed Chat Completions field — the SDK
 	strips it from `messages`, so copy the mapped list into extra_body (OpenRouter
-	only; openai.com rejects unknown message keys). Same for cache_control.
+	only; openai.com rejects unknown message keys). cache_control and
+	prompt_cache_key go through extra_body so an older SDK still forwards them.
 	"""
 	kw = dict(create_kw)
 	extra = dict(kw.get("extra_body") or {})
@@ -1190,6 +1258,9 @@ def _CreateKwForOpenAI(create_kw):
 	cc = kw.pop("cache_control", None)
 	if cc is not None and _IsOpenRouterBase(_ResolveOpenAIBaseUrl()):
 		extra["cache_control"] = cc
+	cache_key = kw.pop("prompt_cache_key", None)
+	if cache_key:
+		extra["prompt_cache_key"] = cache_key
 	msgs = kw.get("messages")
 	if isinstance(msgs, list):
 		public = [
@@ -1301,7 +1372,7 @@ def RemoteChatReply(temperature=None, stream=True, ui_stream=True, on_block=None
 
 		if ant_tools:
 			create_kw = BuildAnthropicMessagesPayload(
-				model_id, system, messages, temp, max_tokens, stream=want_stream,
+				model_id, system, messages, max_tokens, stream=want_stream,
 			)
 			if not want_stream:
 				_NonStreamViaAnthropic(create_kw, state, want_ui, ipc)

@@ -32,6 +32,16 @@ export function ApplyUiTheme(themeId) {
 	return id;
 }
 
+/** Hide or show the right-hand columns (`#chat_side` and gen sides). */
+export function ApplySidePanel(show) {
+	const on = Number(show) !== 0;
+	document.documentElement.classList.toggle('side-panel-hidden', !on);
+	try {
+		localStorage.setItem('aiui_side_panel', on ? '1' : '0');
+	} catch (e) { /* ignore */ }
+	return on ? 1 : 0;
+}
+
 export const bb_code_tags = [
 	"B", "b", "I", "i", "U", "u", "S", "s", "OL", "ol", "UL", "ul", "LI", "li", "IMG", "img", "URL", "url",
 	"H1", "h1", "H2", "h2", "H3", "h3", "H4", "h4", "H5", "h5", "H6", "h6", "PRE", "pre", "CENTER", "center",

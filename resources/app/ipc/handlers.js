@@ -168,6 +168,51 @@ function createBridgeHelpers(getWin) {
 	};
 }
 
+function PromptFilesStamp(home, workspace) {
+	const roots = [];
+	if (home && fs.existsSync(home)) roots.push(home);
+	const ws = String(workspace || '').trim();
+	if (ws) {
+		const proj = path.join(ws, '.aiui');
+		if (fs.existsSync(proj)) roots.push(proj);
+	}
+	const rules = new Map();
+	const skills = new Map();
+	const agents = new Map();
+	function Put(map, id, abs) {
+		try {
+			const st = fs.statSync(abs);
+			if (!st.isFile()) return;
+			map.set(id, { id: id, mtime: st.mtimeMs, size: st.size });
+		} catch (e) { /* missing */ }
+	}
+	for (const root of roots) {
+		for (const kind of ['agents', 'rules']) {
+			const dir = path.join(root, kind);
+			const dest = kind === 'agents' ? agents : rules;
+			let names = [];
+			try { names = fs.readdirSync(dir); } catch (e) { names = []; }
+			for (const name of names) {
+				if (String(name).endsWith('.md')) Put(dest, name, path.join(dir, name));
+			}
+		}
+		const skillDir = path.join(root, 'skills');
+		let names = [];
+		try { names = fs.readdirSync(skillDir); } catch (e) { names = []; }
+		for (const name of names) {
+			const abs = path.join(skillDir, name);
+			let st;
+			try { st = fs.statSync(abs); } catch (e) { continue; }
+			if (st.isFile() && String(name).endsWith('.md')) Put(skills, name, abs);
+			else if (st.isDirectory()) Put(skills, name, path.join(abs, 'SKILL.md'));
+		}
+	}
+	function List(map) {
+		return Array.from(map.values()).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+	}
+	return { agents: List(agents), rules: List(rules), skills: List(skills) };
+}
+
 function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getConfigPath, sessionOps, sessions, rebuildMenu, saveGlobalConfig }) {
 	const mcpStore = require('../mcp_store.js');
 
@@ -376,6 +421,11 @@ function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getCo
 		}
 	});
 
+	ipcMain.on('copy-text-silent', (event, payload) => {
+		const txt = payload && payload.txt != null ? String(payload.txt) : '';
+		if (txt) clipboard.writeText(txt);
+	});
+
 	ipcMain.on('copy-image', (event, payload) => {
 		if (payload.img != '') {
 			clipboard.writeImage(nativeImage.createFromPath(payload.img));
@@ -397,7 +447,9 @@ function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getCo
 			title: payload.title || 'Confirm Action',
 			noLink: true,
 			message: payload.msg || 'Proceed?',
-			buttons: ['Confirm', 'Cancel']
+			buttons: (Array.isArray(payload.buttons) && payload.buttons.length >= 2)
+				? payload.buttons.slice(0, 2)
+				: ['Confirm', 'Cancel']
 		});
 		return result.response === 0;
 	});
@@ -413,7 +465,11 @@ function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getCo
 	ipcMain.on('send-msg', (event, payload) => {
 		payload = payload || {};
 		if (payload.cmd) {
-			engine.sendEngineCmd(payload.cmd);
+			if (payload.text != null && String(payload.text) !== '') {
+				engine.sendEngineCmd(payload.cmd, { text: payload.text });
+			} else {
+				engine.sendEngineCmd(payload.cmd);
+			}
 			return;
 		}
 		// Fold attachments into the chat cmd (not a separate attach_files first).
@@ -655,13 +711,30 @@ function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getCo
 	});
 
 	ipcMain.on('config-prompt-files', (event, payload) => {
-		core.configPromptFiles(payload || {});
-		if (sessions && payload && payload.hasOwnProperty('workspace')) {
-			// workspace is owned by Open/Close Project; ignore settings overrides
-			core.APP_CONFIG.workspace = sessions.workspacePath || '';
+		const apply = !!(payload && payload.apply);
+		const save = apply || !!(payload && payload.save);
+		if (save) {
+			core.configPromptFiles(payload || {});
+			if (sessions && payload && payload.hasOwnProperty('workspace')) {
+				core.APP_CONFIG.workspace = sessions.workspacePath || '';
+			}
+			PersistScopedConfig();
 		}
-		PersistScopedConfig();
-		engine.sendEngineCmd('compose_prompt');
+		const workspace = sessions && sessions.workspacePath ? sessions.workspacePath : '';
+		engine.sendEngineCmd('compose_prompt', {
+			agent: (payload && payload.agent) || '',
+			enabled_rules: payload && payload.enabled_rules,
+			enabled_skills: payload && payload.enabled_skills,
+			workspace: workspace,
+			apply: apply ? 1 : 0,
+			save: save ? 1 : 0
+		});
+	});
+
+	ipcMain.handle('prompt-files-stamp', () => {
+		const home = sessions && typeof sessions.GetAiuiHome === 'function' ? sessions.GetAiuiHome() : '';
+		const workspace = sessions && sessions.workspacePath ? sessions.workspacePath : '';
+		return PromptFilesStamp(home, workspace);
 	});
 
 	ipcMain.on('config-other', (event, payload) => {
@@ -671,9 +744,9 @@ function CreateHandlers({ getWin, core, engine, dialogs, checkModelsExist, getCo
 	});
 
 	ipcMain.on('show-menubar', () => {
-		const win = getWin();
-		if (win) win.setMenuBarVisibility(true);
 		rebuildMenu();
+		const { ApplyAppMenuBar } = require('../menu.js');
+		ApplyAppMenuBar(getWin(), core);
 	});
 
 	ipcMain.on('update-users', (event, payload) => {

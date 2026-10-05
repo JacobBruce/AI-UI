@@ -200,11 +200,20 @@ def _tool_to_schema(tool):
 	schema = getattr(tool, "inputSchema", None) or {}
 	if not isinstance(schema, dict):
 		schema = {}
-	return {
+	item = {
 		"name": tool.name,
 		"description": getattr(tool, "description", None) or "",
 		"inputSchema": schema,
 	}
+	ann = getattr(tool, "annotations", None)
+	hint = None
+	if isinstance(ann, dict):
+		hint = ann.get("readOnlyHint")
+	elif ann is not None:
+		hint = getattr(ann, "readOnlyHint", None)
+	if hint is not None:
+		item["readOnlyHint"] = bool(hint)
+	return item
 
 def ServerKey(pack_id):
 	"""mcp:cait → cait (used as tool-name prefix)."""
